@@ -1,0 +1,8 @@
+PySide6
+pandas
+openpyxl
+rapidfuzz
+reportlab
+jinja2
+python-dotenv
+pyautogui
