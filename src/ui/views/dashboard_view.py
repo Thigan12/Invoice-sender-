@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                               QLabel, QScrollArea, QFrame)
+                               QLabel, QScrollArea, QFrame, QMessageBox)
 from PySide6.QtCore import Qt, Signal
 import datetime
 from src.database.repository import DataRepository
@@ -31,9 +31,11 @@ class StatCard(QFrame):
 
 class ImportHistoryCard(QFrame):
     clicked = Signal(list) # Emits the invoice_ids for this import
+    deleteRequested = Signal(int) # Emits the import_id
 
-    def __init__(self, file_name, date_str, cust_count, inv_count, total_val, invoice_ids_str):
+    def __init__(self, import_id, file_name, date_str, cust_count, inv_count, total_val, invoice_ids_str):
         super().__init__()
+        self.import_id = import_id
         self.invoice_ids = [int(i) for i in invoice_ids_str.split(',')] if invoice_ids_str else []
         try:
             dt = datetime.datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
@@ -73,9 +75,32 @@ class ImportHistoryCard(QFrame):
         stats_lbl = QLabel(f"{cust_count} Customers  |  {inv_count} Invoices  |  ${safe_val:,.2f}")
         stats_lbl.setStyleSheet("color: #a5b4fc; font-size: 13px;")
         
+        # Delete Button
+        self.btn_delete = QPushButton("Delete")
+        self.btn_delete.setFixedSize(60, 28)
+        self.btn_delete.setCursor(Qt.ArrowCursor)
+        self.btn_delete.setStyleSheet("""
+            QPushButton {
+                background: rgba(239, 68, 68, 0.1);
+                border: 1px solid rgba(239, 68, 68, 0.2);
+                border-radius: 6px;
+                color: #f87171;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: #ef4444;
+                color: white;
+                border-color: #ef4444;
+            }
+        """)
+        self.btn_delete.clicked.connect(lambda: self.deleteRequested.emit(self.import_id))
+
         layout.addLayout(info)
         layout.addStretch()
         layout.addWidget(stats_lbl)
+        layout.addSpacing(20)
+        layout.addWidget(self.btn_delete)
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.invoice_ids)
@@ -179,12 +204,54 @@ class DashboardView(QWidget):
                 no_data.setAlignment(Qt.AlignCenter)
                 self.history_layout.addWidget(no_data)
             else:
-                for fname, date, c_cnt, i_cnt, val, ids_str in imports:
-                    card = ImportHistoryCard(fname, date, c_cnt, i_cnt, val, ids_str)
+                for imp_id, fname, date, c_cnt, i_cnt, val, ids_str in imports:
+                    card = ImportHistoryCard(imp_id, fname, date, c_cnt, i_cnt, val, ids_str)
                     card.clicked.connect(self.viewInvoicesRequested.emit)
+                    card.deleteRequested.connect(self.on_delete_import)
                     self.history_layout.addWidget(card)
         except Exception as e:
             print(f"Error refreshing dashboard: {e}")
             err_lbl = QLabel(f"Dashboard error: {str(e)}")
             err_lbl.setStyleSheet("color: #f87171; font-style: italic;")
             self.history_layout.addWidget(err_lbl)
+
+    def on_delete_import(self, import_id):
+        confirm = QMessageBox(self)
+        confirm.setWindowTitle("Confirm Delete")
+        confirm.setText("Are you sure you want to delete this import?")
+        confirm.setInformativeText("This will also remove all associated invoices and customer associations for this specific import. This action cannot be undone.")
+        confirm.setIcon(QMessageBox.Warning)
+        confirm.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        confirm.setDefaultButton(QMessageBox.No)
+        
+        # Apply dark theme styles to message box
+        confirm.setStyleSheet("""
+            QMessageBox {
+                background-color: #1e293b;
+            }
+            QLabel {
+                color: #f8fafc;
+            }
+            QPushButton {
+                background: #334155;
+                border: 1px solid #475569;
+                border-radius: 6px;
+                color: white;
+                padding: 6px 15px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background: #475569;
+            }
+            QPushButton[text="&Yes"] {
+                background: #ef4444;
+                border-color: #ef4444;
+            }
+            QPushButton[text="&Yes"]:hover {
+                background: #dc2626;
+            }
+        """)
+        
+        if confirm.exec() == QMessageBox.Yes:
+            DataRepository.delete_import(import_id)
+            self.refresh_data()

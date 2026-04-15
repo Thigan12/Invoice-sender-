@@ -52,7 +52,7 @@ class ExcelParser:
             df['Phone'] = df['Phone'].replace('', None).ffill().fillna('')
             
             # Clean data
-            df['Customer Name'] = df['Customer Name'].astype(str).str.strip()
+            df['Customer Name'] = df['Customer Name'].astype(str).str.strip().str.title()
             
             # Professional Phone Cleaning (Handle Excel decimals like 123.0)
             def clean_phone(p):
@@ -79,7 +79,7 @@ class ExcelParser:
         Groups the dataframe by customer name and phone.
         """
         # Ensure name and phone are strings/clean
-        df['name'] = df['name'].astype(str).str.strip()
+        df['name'] = df['name'].astype(str).str.strip().str.title()
         df['phone'] = df['phone'].astype(str).str.strip().str.replace('.0', '', regex=False)
         
         groups = {}

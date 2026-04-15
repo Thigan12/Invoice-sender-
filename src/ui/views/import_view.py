@@ -213,10 +213,9 @@ class ImportView(QWidget):
                     import shutil
                     import os
                     from datetime import datetime
+                    from src.utils.paths import get_import_archive_dir
                     
-                    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-                    archive_dir = os.path.join(base_dir, "data", "imports")
-                    os.makedirs(archive_dir, exist_ok=True)
+                    archive_dir = get_import_archive_dir()
                     
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     filename = os.path.basename(file_path)
@@ -255,12 +254,12 @@ class ImportView(QWidget):
 
                 # Support 3 columns (Name, Product, Price) or 4 columns (Name, Phone, Product, Price)
                 if len(parts) >= 4:
-                    name = parts[0].strip()
+                    name = parts[0].strip().title()
                     phone = parts[1].strip()
                     product = parts[2].strip()
                     price_str = parts[3].strip()
                 elif len(parts) == 3:
-                    name = parts[0].strip()
+                    name = parts[0].strip().title()
                     phone = ''
                     product = parts[1].strip()
                     price_str = parts[2].strip()
@@ -350,8 +349,8 @@ class ImportView(QWidget):
         self.btn_select_file.setEnabled(False)
 
         try:
-            self.raw_df['Customer Name'] = self.raw_df['Customer Name'].astype(str)
-            self.raw_df['Phone'] = self.raw_df['Phone'].astype(str)
+            self.raw_df['Customer Name'] = self.raw_df['Customer Name'].astype(str).str.strip().str.title()
+            self.raw_df['Phone'] = self.raw_df['Phone'].astype(str).str.strip()
             
             grouped = self.raw_df.groupby(['Customer Name', 'Phone'])
             total_saved = 0

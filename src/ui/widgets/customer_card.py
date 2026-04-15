@@ -4,6 +4,8 @@ from PySide6.QtCore import Qt, Signal
 class CustomerCard(QFrame):
     clicked = Signal(str, str)  # name, phone
     sendWhatsAppRequested = Signal(str, str)  # name, phone
+    shareWhatsAppRequested = Signal(str, str)  # name, phone — manual share flow
+    copyBillRequested = Signal(str, str)  # name, phone — copy bill text to clipboard
     generatePdfRequested = Signal(str, str) # name, phone
     deleteRequested = Signal(str, str) # name, phone
 
@@ -65,26 +67,46 @@ class CustomerCard(QFrame):
         actions_layout = QHBoxLayout()
         actions_layout.setSpacing(6)
 
-        # 1. Gen PDF Button
-        self.btn_gen = QPushButton("Gen PDF")
-        self.btn_gen.setFixedHeight(30)
-        self.btn_gen.setCursor(Qt.PointingHandCursor)
-        self.btn_gen.setStyleSheet("""
+        # 1. Copy Bill Button (copies full invoice text to clipboard)
+        self.btn_copy_bill = QPushButton("Copy Bill")
+        self.btn_copy_bill.setFixedHeight(30)
+        self.btn_copy_bill.setCursor(Qt.PointingHandCursor)
+        self.btn_copy_bill.setStyleSheet("""
             QPushButton { 
-                background: rgba(148, 163, 184, 0.1); 
-                border: 1px solid rgba(148, 163, 184, 0.2); 
+                background: rgba(99, 102, 241, 0.1); 
+                border: 1px solid rgba(99, 102, 241, 0.25); 
                 border-radius: 6px; 
                 padding: 2px 8px; 
                 font-size: 11px; 
-                color: #94a3b8;
-                font-weight: 600;
+                color: #a5b4fc;
+                font-weight: 700;
             }
-            QPushButton:hover { background: rgba(148, 163, 184, 0.2); color: #f8fafc; border-color: #94a3b8; }
+            QPushButton:hover { background: rgba(99, 102, 241, 0.2); color: #e0e7ff; border-color: #6366f1; }
         """)
-        self.btn_gen.clicked.connect(lambda: self.generatePdfRequested.emit(self.name, self.phone))
+        self.btn_copy_bill.setToolTip("Copy full invoice text to clipboard")
+        self.btn_copy_bill.clicked.connect(lambda: self.copyBillRequested.emit(self.name, self.phone))
 
-        # 2. Send WhatsApp Button
-        self.btn_send = QPushButton("Send WhatsApp")
+        # 2. Share WhatsApp Button (manual: gen PDF → copy → open WA chat)
+        self.btn_share_wa = QPushButton("Share WA")
+        self.btn_share_wa.setFixedHeight(30)
+        self.btn_share_wa.setCursor(Qt.PointingHandCursor)
+        self.btn_share_wa.setStyleSheet("""
+            QPushButton { 
+                background: rgba(37, 211, 102, 0.1); 
+                border: 1px solid rgba(37, 211, 102, 0.25); 
+                border-radius: 6px; 
+                padding: 2px 10px; 
+                font-size: 11px; 
+                color: #25d366;
+                font-weight: 700;
+            }
+            QPushButton:hover { background: rgba(37, 211, 102, 0.25); color: #ffffff; border-color: #25d366; }
+        """)
+        self.btn_share_wa.setToolTip("Generate PDF, copy to clipboard, and open WhatsApp chat")
+        self.btn_share_wa.clicked.connect(lambda: self.shareWhatsAppRequested.emit(self.name, self.phone))
+
+        # 3. Send WhatsApp Button (automated paste & send)
+        self.btn_send = QPushButton("Send WA")
         self.btn_send.setFixedHeight(30)
         self.btn_send.setCursor(Qt.PointingHandCursor)
         self.btn_send.setStyleSheet("""
@@ -92,16 +114,17 @@ class CustomerCard(QFrame):
                 background: rgba(34, 197, 94, 0.1); 
                 border: 1px solid rgba(34, 197, 94, 0.2); 
                 border-radius: 6px; 
-                padding: 2px 12px; 
+                padding: 2px 10px; 
                 font-size: 11px; 
                 color: #4ade80;
                 font-weight: 700;
             }
             QPushButton:hover { background: rgba(34, 197, 94, 0.2); color: #ffffff; border-color: #22c55e; }
         """)
+        self.btn_send.setToolTip("Auto-paste & send PDF via WhatsApp")
         self.btn_send.clicked.connect(lambda: self.sendWhatsAppRequested.emit(self.name, self.phone))
 
-        # 3. Delete Button (Small Trash)
+        # 4. Delete Button (Small Trash)
         self.btn_delete = QPushButton("Delete")
         self.btn_delete.setFixedHeight(30)
         self.btn_delete.setCursor(Qt.PointingHandCursor)
@@ -118,7 +141,8 @@ class CustomerCard(QFrame):
         """)
         self.btn_delete.clicked.connect(lambda: self.deleteRequested.emit(self.name, self.phone))
 
-        actions_layout.addWidget(self.btn_gen)
+        actions_layout.addWidget(self.btn_copy_bill)
+        actions_layout.addWidget(self.btn_share_wa)
         actions_layout.addWidget(self.btn_send)
         actions_layout.addWidget(self.btn_delete)
 

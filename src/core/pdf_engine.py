@@ -5,13 +5,13 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
 from datetime import datetime
+from src.utils.paths import get_pdf_dir
 
 class PDFEngine:
     def __init__(self, output_dir=None):
         # All generated PDFs go to ONE consistent local folder
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         if output_dir is None:
-            self.output_dir = os.path.join(base_dir, "data", "generated_pdfs")
+            self.output_dir = get_pdf_dir()
         else:
             self.output_dir = output_dir
             
@@ -164,8 +164,28 @@ class PDFEngine:
         note_text = "<b>NOTE:</b> If you have paid beforehand or are self-collecting, please deduct the $10.00 delivery fee from the total amount."
         elements.append(Paragraph(note_text, note_style))
         
+        # === PayNow Payment Section ===
+        elements.append(Spacer(1, 14))
+        paynow_style = ParagraphStyle(
+            'PayNowStyle', 
+            parent=self.styles['Normal'], 
+            fontSize=10, 
+            textColor=colors.HexColor("#1e40af"), 
+            leading=15,
+            backColor=colors.HexColor("#eff6ff"),
+            borderPadding=(10, 12, 10, 12),
+        )
+        paynow_text = (
+            "<b>Payment via PayNow:</b><br/>"
+            "PayNow No: <b>87610607</b><br/>"
+            "Name: <b>Watie</b><br/><br/>"
+            "After payment, please send the receipt to <b>+65 89093836</b><br/>"
+            "For any other enquiries, contact the same number."
+        )
+        elements.append(Paragraph(paynow_text, paynow_style))
+        
         # === Footer ===
-        elements.append(Spacer(1, 40))
+        elements.append(Spacer(1, 30))
         elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cbd5e1"), spaceAfter=10))
         footer_style = ParagraphStyle(
             'Footer', 

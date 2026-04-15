@@ -3,7 +3,7 @@ from .connection import get_connection
 class DataRepository:
     @staticmethod
     def get_all_customers_summary(search_query=None):
-        """Returns customers with info from their ABSOLUTE LATEST invoice."""
+        """Returns customers with info from their ABSOLUTE LATEST invoice, including address."""
         conn = get_connection()
         cursor = conn.cursor()
         
@@ -16,7 +16,8 @@ class DataRepository:
         )
         SELECT 
             c.name, 
-            c.phone, 
+            c.phone,
+            c.address,
             (SELECT COUNT(*) FROM invoice_items ii WHERE ii.invoice_id = li.id) as item_count,
             li.total_amount,
             li.status
@@ -65,53 +66,207 @@ class DataRepository:
         return rows
 
     @staticmethod
-    def upsert_customer(name, phone):
-        """Creates a customer or returns the ID based on name and phone pair."""
+    def upsert_customer(name, phone, address=None):
+        """
+        Creates or finds a customer by name + phone.
+        If found, updates phone/address if better values are provided.
+        """
         conn = get_connection()
         cursor = conn.cursor()
-        
-        # 1. First, check if customer exists by NAME (regardless of phone)
-        # If the user wants to update the phone number globally, we should handle that.
-        # However, for now, we keep the name+phone pair for invoice history.
-        cursor.execute("SELECT id, phone FROM customers WHERE name = ? AND phone = ?", (name, phone))
+
+        name    = str(name).strip().title()    if name    else "Unknown"
+        phone   = str(phone).strip()           if phone   else ""
+        address = str(address).strip()         if address and str(address).strip() not in ('', 'nan', 'None') else None
+
+        # First try exact name+phone match
+        cursor.execute(
+            "SELECT id, address FROM customers WHERE LOWER(name) = LOWER(?) AND phone = ?",
+            (name, phone)
+        )
         result = cursor.fetchone()
-        
+
         if result:
-            customer_id = result[0]
+            customer_id      = result[0]
+            existing_address = result[1]
+            new_address = address if address else existing_address
+            if new_address != existing_address:
+                cursor.execute(
+                    "UPDATE customers SET address = ? WHERE id = ?",
+                    (new_address, customer_id)
+                )
         else:
-            cursor.execute("INSERT INTO customers (name, phone) VALUES (?, ?)", (name, phone))
+            # If no phone was given, try matching by name only so we don't create empty-phone duplicates
+            if not phone:
+                cursor.execute(
+                    "SELECT id, phone, address FROM customers WHERE LOWER(name) = LOWER(?)",
+                    (name,)
+                )
+                fallback = cursor.fetchone()
+                if fallback:
+                    customer_id      = fallback[0]
+                    existing_address = fallback[2]
+                    new_address = address if address else existing_address
+                    if new_address != existing_address:
+                        cursor.execute(
+                            "UPDATE customers SET address = ? WHERE id = ?",
+                            (new_address, customer_id)
+                        )
+                    conn.commit()
+                    conn.close()
+                    return customer_id
+
+            cursor.execute(
+                "INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)",
+                (name, phone, address)
+            )
             customer_id = cursor.lastrowid
-            
+
         conn.commit()
         conn.close()
         return customer_id
+
+    @staticmethod
+    def merge_duplicate_customers():
+        """
+        Finds customers with the same name and merges them into one record.
+        Invoices are re-pointed to the surviving (oldest) customer ID.
+        Returns number of duplicates removed.
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+        removed = 0
+        try:
+            # Find names with more than one record
+            cursor.execute("""
+                SELECT LOWER(name) as lname, COUNT(*) as cnt
+                FROM customers
+                GROUP BY LOWER(name)
+                HAVING cnt > 1
+            """)
+            dup_names = cursor.fetchall()
+
+            for (lname, _) in dup_names:
+                cursor.execute(
+                    "SELECT id, phone, address FROM customers WHERE LOWER(name) = ? ORDER BY id ASC",
+                    (lname,)
+                )
+                records = cursor.fetchall()
+                if len(records) < 2:
+                    continue
+
+                # Keep the first (oldest) record as the canonical one
+                keep_id   = records[0][0]
+                keep_phone   = next((r[1] for r in records if r[1]), records[0][1])
+                keep_address = next((r[2] for r in records if r[2]), records[0][2])
+
+                # Update canonical record with best phone/address
+                cursor.execute(
+                    "UPDATE customers SET phone = ?, address = ? WHERE id = ?",
+                    (keep_phone, keep_address, keep_id)
+                )
+
+                # Re-point all invoices from duplicate records to the canonical one
+                dup_ids = [r[0] for r in records[1:]]
+                for dup_id in dup_ids:
+                    cursor.execute(
+                        "UPDATE invoices SET customer_id = ? WHERE customer_id = ?",
+                        (keep_id, dup_id)
+                    )
+                    cursor.execute("DELETE FROM customers WHERE id = ?", (dup_id,))
+                    removed += 1
+
+            conn.commit()
+        finally:
+            conn.close()
+        return removed
 
     @staticmethod
     def get_all_master_customers():
         """Returns all basic customer records for management."""
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, phone FROM customers ORDER BY name ASC")
+        cursor.execute("SELECT id, name, phone, address FROM customers ORDER BY name ASC")
         rows = cursor.fetchall()
         conn.close()
         return rows
 
     @staticmethod
-    def update_customer_info(cust_id, name, phone):
+    def update_customer_info(cust_id, name, phone, address=None):
         """Updates a customer's basic details."""
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("UPDATE customers SET name = ?, phone = ? WHERE id = ?", (name, phone, cust_id))
+        cursor.execute("UPDATE customers SET name = ?, phone = ?, address = ? WHERE id = ?", (name, phone, address, cust_id))
         conn.commit()
         conn.close()
+
+    @staticmethod
+    def get_customer_address(name, phone):
+        """Returns the address for a customer by name and phone."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        name = str(name).strip().title() if name else ""
+        phone = str(phone).strip() if phone else ""
+        cursor.execute("SELECT address FROM customers WHERE LOWER(name) = LOWER(?) AND phone = ?", (name, phone))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+
+    @staticmethod
+    def import_customers_bulk(customers):
+        """
+        Bulk-imports a list of customer dicts: [{'name': ..., 'phone': ..., 'address': ...}]
+        Returns (added_count, updated_count, skipped_count).
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+        added = 0
+        updated = 0
+        skipped = 0
+        try:
+            for c in customers:
+                name = str(c.get('name', '')).strip().title()
+                phone = str(c.get('phone', '')).strip()
+                address = str(c.get('address', '')).strip()
+                
+                # Normalize empties
+                if phone.lower() in ('nan', 'none', ''):
+                    phone = ''
+                if address.lower() in ('nan', 'none', ''):
+                    address = ''
+                
+                if not name or name.lower() in ('nan', 'none', 'unknown'):
+                    skipped += 1
+                    continue
+                
+                cursor.execute(
+                    "SELECT id FROM customers WHERE LOWER(name) = LOWER(?) AND phone = ?",
+                    (name, phone)
+                )
+                row = cursor.fetchone()
+                if row:
+                    # Update address only if we have a new one
+                    if address:
+                        cursor.execute("UPDATE customers SET address = ? WHERE id = ?", (address, row[0]))
+                    updated += 1
+                else:
+                    cursor.execute(
+                        "INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)",
+                        (name, phone, address or None)
+                    )
+                    added += 1
+            conn.commit()
+        finally:
+            conn.close()
+        return added, updated, skipped
 
     @staticmethod
     def find_phone_by_name(name):
         """Tries to find a phone number for a customer name in the master list."""
         conn = get_connection()
         cursor = conn.cursor()
+        name = str(name).strip().title() if name else ""
         # Look for the latest phone number assigned to this name
-        cursor.execute("SELECT phone FROM customers WHERE name = ? AND phone != '' ORDER BY id DESC LIMIT 1", (name,))
+        cursor.execute("SELECT phone FROM customers WHERE LOWER(name) = LOWER(?) AND phone != '' ORDER BY id DESC LIMIT 1", (name,))
         row = cursor.fetchone()
         conn.close()
         return row[0] if row else None
@@ -175,31 +330,42 @@ class DataRepository:
             conn.close()
 
     @staticmethod
-    def delete_customer_by_details(name, phone):
-        """Deletes a customer and ALL their invoices/items from the database."""
+    def delete_customer_by_id(cust_id):
+        """Removes the customer record but preserves their invoices as orphaned records."""
         conn = get_connection()
         cursor = conn.cursor()
         try:
+            # 1. Nullify customer_id in invoices to prevent cascading delete and preserve history
+            cursor.execute("UPDATE invoices SET customer_id = NULL WHERE customer_id = ?", (cust_id,))
+            
+            # 2. Delete the customer row
+            cursor.execute("DELETE FROM customers WHERE id = ?", (cust_id,))
+            
+            conn.commit()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def delete_customer_by_details(name, phone):
+        """Removes the customer record by name/phone but preserves their invoices."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        try:
+            name = str(name).strip().title() if name else "Unknown"
+            phone = str(phone).strip() if phone else ""
+            
             # 1. Find the customer ID
-            cursor.execute("SELECT id FROM customers WHERE name = ? AND phone = ?", (name, phone))
+            cursor.execute("SELECT id FROM customers WHERE LOWER(name) = LOWER(?) AND phone = ?", (name, phone))
             row = cursor.fetchone()
             if not row:
                 return
             
             cust_id = row[0]
             
-            # 2. Get all invoice IDs for this customer
-            cursor.execute("SELECT id FROM invoices WHERE customer_id = ?", (cust_id,))
-            inv_ids = [r[0] for r in cursor.fetchall()]
+            # 2. Orphan the invoices
+            cursor.execute("UPDATE invoices SET customer_id = NULL WHERE customer_id = ?", (cust_id,))
             
-            # 3. Delete items for each invoice
-            for inv_id in inv_ids:
-                cursor.execute("DELETE FROM invoice_items WHERE invoice_id = ?", (inv_id,))
-                
-            # 4. Delete invoices
-            cursor.execute("DELETE FROM invoices WHERE customer_id = ?", (cust_id,))
-            
-            # 5. Finally delete customer
+            # 3. Delete customer
             cursor.execute("DELETE FROM customers WHERE id = ?", (cust_id,))
             
             conn.commit()
@@ -212,19 +378,29 @@ class DataRepository:
         conn = get_connection()
         cursor = conn.cursor()
         try:
+            name = str(name).strip().title() if name else "Unknown"
+            phone = str(phone).strip() if phone else ""
+
             cursor.execute("""
-                SELECT i.id 
-                FROM invoices i 
-                JOIN customers c ON i.customer_id = c.id 
-                WHERE c.name = ? AND c.phone = ? 
-                ORDER BY i.issue_date DESC LIMIT 1
+                DELETE FROM invoice_items 
+                WHERE invoice_id IN (
+                    SELECT i.id FROM invoices i
+                    JOIN customers c ON i.customer_id = c.id
+                    WHERE LOWER(c.name) = LOWER(?) AND c.phone = ?
+                )
             """, (name, phone))
-            row = cursor.fetchone()
-            if row:
-                inv_id = row[0]
-                cursor.execute("DELETE FROM invoice_items WHERE invoice_id = ?", (inv_id,))
-                cursor.execute("DELETE FROM invoices WHERE id = ?", (inv_id,))
-                conn.commit()
+            
+            cursor.execute("""
+                DELETE FROM invoices 
+                WHERE id IN (
+                    SELECT i.id FROM invoices i
+                    JOIN customers c ON i.customer_id = c.id
+                    WHERE LOWER(c.name) = LOWER(?) AND c.phone = ?
+                )
+            """, (name, phone))
+
+            cursor.execute("DELETE FROM customers WHERE LOWER(name) = LOWER(?) AND phone = ?", (name, phone))
+            conn.commit()
         finally:
             conn.close()
 
@@ -234,11 +410,14 @@ class DataRepository:
         conn = get_connection()
         cursor = conn.cursor()
         
+        name = str(name).strip().title() if name else "Unknown"
+        phone = str(phone).strip() if phone else ""
+
         cursor.execute("""
             SELECT i.id, i.invoice_number, i.total_amount, i.status, c.name, i.pdf_path
             FROM invoices i
             JOIN customers c ON i.customer_id = c.id
-            WHERE c.name = ? AND c.phone = ?
+            WHERE LOWER(c.name) = LOWER(?) AND c.phone = ?
             ORDER BY i.issue_date DESC LIMIT 1
         """, (name, phone))
         invoice = cursor.fetchone()
@@ -432,12 +611,16 @@ class DataRepository:
         conn = get_connection()
         cursor = conn.cursor()
         
+        # 0. Normalize
+        name = str(name).strip().title() if name else "Unknown"
+        phone = str(phone).strip() if phone else ""
+
         # Get all invoices for this customer
         cursor.execute("""
             SELECT i.id, i.invoice_number, i.total_amount, i.status, i.issue_date, i.pdf_path
             FROM invoices i
             JOIN customers c ON i.customer_id = c.id
-            WHERE c.name = ? AND c.phone = ?
+            WHERE LOWER(c.name) = LOWER(?) AND c.phone = ?
             ORDER BY i.issue_date DESC
         """, (name, phone))
         invoices = cursor.fetchall()
@@ -467,7 +650,7 @@ class DataRepository:
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT file_name, import_date, customer_count, invoice_count, total_value, invoice_ids
+            SELECT id, file_name, import_date, customer_count, invoice_count, total_value, invoice_ids
             FROM import_logs
             ORDER BY import_date DESC
             LIMIT ?
@@ -475,3 +658,34 @@ class DataRepository:
         rows = cursor.fetchall()
         conn.close()
         return rows
+
+    @staticmethod
+    def delete_import(import_id):
+        """Deletes an import log and all associated invoices."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        try:
+            # 1. Get the invoice IDs from the log
+            cursor.execute("SELECT invoice_ids FROM import_logs WHERE id = ?", (import_id,))
+            row = cursor.fetchone()
+            if not row:
+                return
+            
+            ids_str = row[0]
+            if ids_str:
+                invoice_ids = [int(i) for i in ids_str.split(',') if i.strip()]
+                if invoice_ids:
+                    placeholders = ",".join(["?"] * len(invoice_ids))
+                    
+                    # Delete items
+                    cursor.execute(f"DELETE FROM invoice_items WHERE invoice_id IN ({placeholders})", invoice_ids)
+                    
+                    # Delete invoices
+                    cursor.execute(f"DELETE FROM invoices WHERE id IN ({placeholders})", invoice_ids)
+            
+            # 2. Delete the log entry
+            cursor.execute("DELETE FROM import_logs WHERE id = ?", (import_id,))
+            
+            conn.commit()
+        finally:
+            conn.close()

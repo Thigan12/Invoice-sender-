@@ -1,7 +1,8 @@
 import sqlite3
 import os
+from src.utils.paths import get_db_path
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "invoices.db")
+DB_PATH = get_db_path()
 
 def get_connection():
     """Returns a connection to the SQLite database."""
@@ -23,11 +24,20 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         phone TEXT,
+        address TEXT,
         last_invoice_date DATETIME,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(name, phone)
     )
     ''')
+    
+    # Migration: add address column if it doesn't exist (for existing DBs)
+    try:
+        cursor.execute("ALTER TABLE customers ADD COLUMN address TEXT")
+        conn.commit()
+        print("Migration: added 'address' column to customers table.")
+    except Exception:
+        pass  # Column already exists — safe to ignore
     
     # 2. Master Products (for Fuzzy Matching learning)
     cursor.execute('''

@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from src.database.repository import DataRepository
+from src.ui.dialogs.import_customers_dialog import ImportCustomersDialog
 
 
 # ============================================================
@@ -265,14 +266,14 @@ class AllCustomerCard(QFrame):
     """A clickable card for each customer in the details grid."""
     clicked = Signal(str, str)  # name, phone
 
-    def __init__(self, name, phone, item_count, total_amount, status):
+    def __init__(self, name, phone, item_count, total_amount, status, address=None):
         super().__init__()
         self.name = name
         self.phone = phone or ""
         self.setObjectName("AllCustomerCard")
         self.setCursor(Qt.PointingHandCursor)
         self.setMinimumHeight(140)
-        self.setMaximumHeight(160)
+        self.setMaximumHeight(185)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         # Dynamic border/accent based on status
@@ -365,11 +366,18 @@ class AllCustomerCard(QFrame):
 
         # Row 2: Phone
         if phone and phone.strip():
-            phone_lbl = QLabel(phone)
+            phone_lbl = QLabel(f"📞  {phone}")
             phone_lbl.setStyleSheet("font-size: 12px; color: #64748b; background: transparent; padding-left: 48px;")
             layout.addWidget(phone_lbl)
 
-        # Row 3: Items count + Total
+        # Row 3: Address (new)
+        if address and str(address).strip() and str(address).strip().lower() not in ('nan', 'none', ''):
+            addr_lbl = QLabel(f"📍  {str(address).strip()}")
+            addr_lbl.setStyleSheet("font-size: 11px; color: #475569; background: transparent; padding-left: 48px;")
+            addr_lbl.setWordWrap(True)
+            layout.addWidget(addr_lbl)
+
+        # Row 4: Items count + Total
         bottom_row = QHBoxLayout()
 
         items_lbl = QLabel(f"{item_count} items")
@@ -432,6 +440,30 @@ class AllCustomersView(QWidget):
         
         header_layout.addLayout(welcome)
         header_layout.addStretch()
+
+        # ── Import Customers Button ──
+        self.btn_import_customers = QPushButton("📥  Import Customers")
+        self.btn_import_customers.setFixedHeight(44)
+        self.btn_import_customers.setCursor(Qt.PointingHandCursor)
+        self.btn_import_customers.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #6366f1, stop:1 #4f46e5);
+                border: none;
+                border-radius: 10px;
+                padding: 10px 22px;
+                font-size: 13px;
+                font-weight: 700;
+                color: #ffffff;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #818cf8, stop:1 #6366f1);
+            }
+        """)
+        self.btn_import_customers.clicked.connect(self._on_import_customers)
+        header_layout.addWidget(self.btn_import_customers)
+
         layout.addLayout(header_layout)
 
         # ---- Search Bar ----
@@ -489,6 +521,7 @@ class AllCustomersView(QWidget):
     def refresh_data(self):
         try:
             # Clear existing cards
+            self.setUpdatesEnabled(False)  # freeze painting for speed
             while self.grid_layout.count():
                 item = self.grid_layout.takeAt(0)
                 if item.widget():
@@ -523,25 +556,34 @@ class AllCustomersView(QWidget):
                 empty_layout.addWidget(empty_sub)
                 self.grid_layout.addWidget(empty_frame, 0, 0, 1, 3)
                 self.count_label.setText("0 customers")
+                self.setUpdatesEnabled(True)
                 return
 
             self.count_label.setText(f"{len(customers)} customer{'s' if len(customers) != 1 else ''}")
 
-            # Create grid of cards - 3 columns
+            # Create grid of cards — 3 columns
+            # Row now: name, phone, address, item_count, total_amount, status
             cols = 3
-            for idx, (name, phone, item_count, total, status) in enumerate(customers):
+            for idx, row in enumerate(customers):
+                name       = row[0]
+                phone      = row[1]
+                address    = row[2]  # ← comes direct from SQL, no extra query
+                item_count = row[3]
+                total      = row[4]
+                status     = row[5]
                 p_str = str(phone) if phone is not None else ""
                 card = AllCustomerCard(
                     name=name,
                     phone=p_str,
                     item_count=item_count or 0,
                     total_amount=total or 0.0,
-                    status=status or "Draft"
+                    status=status or "Draft",
+                    address=address
                 )
                 card.clicked.connect(self.on_customer_card_clicked)
-                row = idx // cols
-                col = idx % cols
-                self.grid_layout.addWidget(card, row, col)
+                row_pos = idx // cols
+                col_pos = idx % cols
+                self.grid_layout.addWidget(card, row_pos, col_pos)
 
             # Fill remaining cells in last row for alignment
             remainder = len(customers) % cols
@@ -557,8 +599,16 @@ class AllCustomersView(QWidget):
             err_lbl = QLabel(f"Error loading customers: {str(e)}")
             err_lbl.setStyleSheet("color: #f87171; font-style: italic; background: transparent; padding: 20px;")
             self.grid_layout.addWidget(err_lbl, 0, 0)
+        finally:
+            self.setUpdatesEnabled(True)  # always re-enable painting
 
     def on_customer_card_clicked(self, name, phone):
         """Open the big popup with full customer purchase details."""
         popup = CustomerDetailPopup(self, name, phone)
         popup.exec_()
+
+    def _on_import_customers(self):
+        """Open the Import Customers dialog."""
+        dialog = ImportCustomersDialog(self)
+        dialog.customers_imported.connect(self.refresh_data)
+        dialog.exec_()

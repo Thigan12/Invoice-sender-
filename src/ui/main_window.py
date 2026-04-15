@@ -2,9 +2,9 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                                QLabel, QLineEdit, QPushButton, QScrollArea, QFrame, 
                                QTableWidget, QTableWidgetItem, QHeaderView, QStackedWidget,
                                QMessageBox, QSplitter, QApplication, QGraphicsDropShadowEffect,
-                               QDialog)
-from PySide6.QtCore import Qt, QMimeData, QUrl, QTimer
-from PySide6.QtGui import QColor
+                               QDialog, QSpinBox, QComboBox, QSizePolicy, QStatusBar)
+from PySide6.QtCore import Qt, QMimeData, QUrl, QTimer, QSize
+from PySide6.QtGui import QColor, QFont
 import os
 import time
 try:
@@ -93,6 +93,25 @@ BTN_DANGER = """
         border-color: #ef4444;
         color: #fca5a5;
     }
+"""
+
+BTN_SHARE_WA = """
+    QPushButton { 
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #25d366, stop:1 #128c7e);
+        border: none;
+        border-radius: 8px; 
+        padding: 8px 18px; 
+        font-size: 12px; 
+        font-weight: 700;
+        color: #ffffff;
+    }
+    QPushButton:hover { 
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #34eb7a, stop:1 #25d366);
+    }
+    QPushButton:pressed { background: #128c7e; }
+    QPushButton:disabled { background: #334155; color: #64748b; }
 """
 
 
@@ -306,9 +325,16 @@ class InvoiceCustomerPopup(QDialog):
         self.btn_gen_pdf.setStyleSheet(BTN_PRIMARY)
         self.btn_gen_pdf.clicked.connect(self._on_gen_pdf)
 
-        self.btn_send_wa = QPushButton("Send WhatsApp")
+        self.btn_share_wa = QPushButton("Share WA")
+        self.btn_share_wa.setFixedHeight(42)
+        self.btn_share_wa.setStyleSheet(BTN_SHARE_WA)
+        self.btn_share_wa.setToolTip("Generate PDF, copy to clipboard, and open WhatsApp chat")
+        self.btn_share_wa.clicked.connect(self._on_share_wa)
+
+        self.btn_send_wa = QPushButton("Send WA")
         self.btn_send_wa.setFixedHeight(42)
         self.btn_send_wa.setStyleSheet(BTN_SUCCESS)
+        self.btn_send_wa.setToolTip("Auto-paste & send PDF via WhatsApp")
         self.btn_send_wa.clicked.connect(self._on_send_wa)
 
         self.btn_delete = QPushButton("Delete")
@@ -322,6 +348,7 @@ class InvoiceCustomerPopup(QDialog):
         btn_close.clicked.connect(self.accept)
 
         btn_bar.addWidget(self.btn_gen_pdf)
+        btn_bar.addWidget(self.btn_share_wa)
         btn_bar.addWidget(self.btn_send_wa)
         btn_bar.addWidget(self.btn_delete)
         btn_bar.addStretch()
@@ -331,6 +358,7 @@ class InvoiceCustomerPopup(QDialog):
         # Disable buttons if no invoice
         if not invoice:
             self.btn_gen_pdf.setEnabled(False)
+            self.btn_share_wa.setEnabled(False)
             self.btn_send_wa.setEnabled(False)
             self.btn_delete.setEnabled(False)
 
@@ -352,8 +380,58 @@ class InvoiceCustomerPopup(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to generate PDF: {str(e)}")
 
+    def _on_share_wa(self):
+        """Share WhatsApp — manual flow: generate PDF, copy to clipboard, open WA chat."""
+        if not self.invoice:
+            return
+        phone = self.phone
+        if not phone or phone.strip() == "" or phone == "None":
+            phone = DataRepository.find_phone_by_name(self.name)
+        if not phone:
+            QMessageBox.warning(self, "No Phone", f"No phone number found for {self.name}.")
+            return
+
+        # Step 1: Ensure PDF exists (auto-generate if needed)
+        pdf_path = self.invoice[5] if len(self.invoice) > 5 else None
+        if not pdf_path or not os.path.exists(pdf_path):
+            try:
+                pdf_path = self.pdf_engine.generate(
+                    customer_name=self.name,
+                    invoice_number=self.invoice[1],
+                    items=self.items,
+                    total_amount=self.invoice[2]
+                )
+                DataRepository.update_invoice_pdf(self.invoice[0], pdf_path)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to generate PDF: {str(e)}")
+                return
+
+        # Step 2: Copy PDF to clipboard
+        try:
+            mime_data = QMimeData()
+            mime_data.setUrls([QUrl.fromLocalFile(os.path.abspath(pdf_path))])
+            QApplication.clipboard().setMimeData(mime_data)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to copy PDF: {str(e)}")
+            return
+
+        # Step 3: Open WhatsApp chat with invoice message
+        try:
+            self.whatsapp_bridge.send_with_message(
+                phone=phone, customer_name=self.name,
+                invoice_no=self.invoice[1], total_amount=self.invoice[2])
+            DataRepository.update_invoice_status(self.invoice[0], "Sent")
+            self.did_action = True
+            QMessageBox.information(self, "Share WhatsApp",
+                f"PDF generated and copied to clipboard.\n\n"
+                f"WhatsApp chat opened for {self.name}.\n"
+                f"Just paste (Ctrl+V) and send!")
+            self.accept()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open WhatsApp: {str(e)}")
+
     def _on_send_wa(self):
-        """Send WhatsApp for this customer."""
+        """Send WhatsApp for this customer (automated paste & send)."""
         if not self.invoice:
             return
         phone = self.phone
@@ -385,7 +463,9 @@ class InvoiceCustomerPopup(QDialog):
             mime_data.setUrls([QUrl.fromLocalFile(os.path.abspath(pdf_path))])
             QApplication.clipboard().setMimeData(mime_data)
 
-            success = self.whatsapp_bridge.send_invoice_pdf(phone=phone, customer_name=self.name)
+            success = self.whatsapp_bridge.send_with_message(
+                phone=phone, customer_name=self.name,
+                invoice_no=self.invoice[1], total_amount=self.invoice[2])
             if success:
                 DataRepository.update_invoice_status(self.invoice[0], "Sent")
                 self.did_action = True
@@ -408,11 +488,214 @@ class InvoiceCustomerPopup(QDialog):
                 QMessageBox.critical(self, "Error", f"Failed to delete: {str(e)}")
 
 
+class SettingsDialog(QDialog):
+    """Window size & UI customisation dialog."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.main_win = parent
+        self.setWindowTitle("App Settings")
+        self.setMinimumWidth(420)
+        self.setStyleSheet("""
+            QDialog {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #0f172a, stop:1 #1e293b);
+            }
+            QLabel { color: #e2e8f0; background: transparent; }
+            QSpinBox, QComboBox {
+                background: rgba(15,23,42,0.9);
+                color: #e2e8f0;
+                border: 1px solid rgba(99,102,241,0.35);
+                border-radius: 7px;
+                padding: 6px 10px;
+                font-size: 13px;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                background: rgba(99,102,241,0.15);
+                border-radius: 4px;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background: #1e293b;
+                color: #e2e8f0;
+                selection-background-color: rgba(99,102,241,0.35);
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(18)
+
+        # ---- Title ----
+        title = QLabel("⚙  App Customisation")
+        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #a5b4fc;")
+        layout.addWidget(title)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: rgba(99,102,241,0.2);")
+        layout.addWidget(sep)
+
+        # ---- Window Size Presets ----
+        preset_lbl = QLabel("Window Size Preset")
+        preset_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #94a3b8;")
+        layout.addWidget(preset_lbl)
+
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItems([
+            "Custom",
+            "Compact  (1024 × 700)",
+            "Default  (1250 × 850)",
+            "Large    (1440 × 900)",
+            "Full HD  (1920 × 1080)",
+            "Maximise Window",
+        ])
+        self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
+        layout.addWidget(self.preset_combo)
+
+        # ---- Custom Size ----
+        custom_lbl = QLabel("Custom Window Size")
+        custom_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #94a3b8;")
+        layout.addWidget(custom_lbl)
+
+        size_row = QHBoxLayout()
+        size_row.setSpacing(10)
+
+        w_lbl = QLabel("Width:")
+        self.spin_w = QSpinBox()
+        self.spin_w.setRange(800, 3840)
+        self.spin_w.setSingleStep(50)
+        self.spin_w.setValue(parent.width())
+        self.spin_w.setSuffix(" px")
+
+        h_lbl = QLabel("Height:")
+        self.spin_h = QSpinBox()
+        self.spin_h.setRange(600, 2160)
+        self.spin_h.setSingleStep(50)
+        self.spin_h.setValue(parent.height())
+        self.spin_h.setSuffix(" px")
+
+        size_row.addWidget(w_lbl)
+        size_row.addWidget(self.spin_w)
+        size_row.addSpacing(8)
+        size_row.addWidget(h_lbl)
+        size_row.addWidget(self.spin_h)
+        layout.addLayout(size_row)
+
+        # ---- Sidebar Width ----
+        side_lbl = QLabel("Sidebar Width")
+        side_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #94a3b8;")
+        layout.addWidget(side_lbl)
+
+        side_row = QHBoxLayout()
+        side_row.setSpacing(10)
+        sw_lbl = QLabel("Width:")
+        self.spin_sw = QSpinBox()
+        self.spin_sw.setRange(200, 600)
+        self.spin_sw.setSingleStep(10)
+        # Read current sidebar width
+        try:
+            self.spin_sw.setValue(parent.sidebar.width() or 330)
+        except Exception:
+            self.spin_sw.setValue(330)
+        self.spin_sw.setSuffix(" px")
+        side_row.addWidget(sw_lbl)
+        side_row.addWidget(self.spin_sw)
+        side_row.addStretch()
+        layout.addLayout(side_row)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.HLine)
+        sep2.setStyleSheet("color: rgba(99,102,241,0.2);")
+        layout.addWidget(sep2)
+
+        # ---- Apply / Close ----
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        btn_apply = QPushButton("Apply")
+        btn_apply.setFixedHeight(40)
+        btn_apply.setStyleSheet(BTN_PRIMARY)
+        btn_apply.clicked.connect(self._apply)
+
+        btn_reset = QPushButton("Reset Defaults")
+        btn_reset.setFixedHeight(40)
+        btn_reset.setStyleSheet(BTN_GHOST)
+        btn_reset.clicked.connect(self._reset)
+
+        btn_close = QPushButton("Close")
+        btn_close.setFixedHeight(40)
+        btn_close.setStyleSheet(BTN_GHOST)
+        btn_close.clicked.connect(self.accept)
+
+        btn_row.addWidget(btn_apply)
+        btn_row.addWidget(btn_reset)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
+
+    def _on_preset_changed(self, idx):
+        presets = [
+            None,
+            (1024, 700),
+            (1250, 850),
+            (1440, 900),
+            (1920, 1080),
+            None,  # Maximise
+        ]
+        p = presets[idx]
+        if p:
+            self.spin_w.setValue(p[0])
+            self.spin_h.setValue(p[1])
+
+    def _apply(self):
+        idx = self.preset_combo.currentIndex()
+        if idx == 5:  # Maximise
+            self.main_win.showMaximized()
+        else:
+            w = self.spin_w.value()
+            h = self.spin_h.value()
+            self.main_win.resize(w, h)
+            self.main_win.showNormal()
+
+        # Apply sidebar width
+        sw = self.spin_sw.value()
+        try:
+            self.main_win.sidebar.setMinimumWidth(sw)
+            self.main_win.sidebar.setMaximumWidth(sw)
+        except Exception:
+            pass
+
+        self.main_win.statusBar().showMessage(
+            f"Window resized to {self.main_win.width()} × {self.main_win.height()}  |  Sidebar: {sw}px",
+            3000
+        )
+
+    def _reset(self):
+        self.spin_w.setValue(1250)
+        self.spin_h.setValue(850)
+        self.spin_sw.setValue(330)
+        self.preset_combo.setCurrentIndex(2)
+        self._apply()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Invoice Sender Pro")
         self.resize(1250, 850)
+
+        # Status bar for non-intrusive notifications
+        self._status_bar = QStatusBar()
+        self._status_bar.setStyleSheet("""
+            QStatusBar {
+                background: rgba(15,23,42,0.95);
+                color: #a5b4fc;
+                font-size: 12px;
+                border-top: 1px solid rgba(99,102,241,0.15);
+                padding: 2px 10px;
+            }
+        """)
+        self.setStatusBar(self._status_bar)
         
         self.pdf_engine = PDFEngine()
         self.whatsapp_bridge = WhatsAppBridge()
@@ -439,7 +722,8 @@ class MainWindow(QMainWindow):
 
         # 2. Main Stacked Widget
         self.content_area = QStackedWidget()
-        self.main_layout.addWidget(self.content_area)
+        self.content_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.main_layout.addWidget(self.content_area, 1)
 
         # --- Dashboard View (Index 0) ---
         self.dashboard_view = DashboardView()
@@ -592,6 +876,33 @@ class MainWindow(QMainWindow):
 
         rail_layout.addStretch()
 
+        # ---- SETTINGS BUTTON ----
+        settings_sep = QFrame()
+        settings_sep.setFrameShape(QFrame.HLine)
+        settings_sep.setStyleSheet("color: rgba(99,102,241,0.12); margin: 0 16px;")
+        rail_layout.addWidget(settings_sep)
+
+        btn_settings = QPushButton("⚙  Settings")
+        btn_settings.setToolTip("Customise window size, sidebar width, and UI")
+        btn_settings.clicked.connect(self.open_settings)
+        btn_settings.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                color: #64748b;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 12px 25px;
+                text-align: left;
+                border-radius: 0px;
+            }
+            QPushButton:hover {
+                color: #a5b4fc;
+                background: rgba(99, 102, 241, 0.06);
+            }
+        """)
+        rail_layout.addWidget(btn_settings)
+
         # ---- FOOTER ----
         footer = QLabel("v2.0 — Professional")
         footer.setAlignment(Qt.AlignCenter)
@@ -640,6 +951,9 @@ class MainWindow(QMainWindow):
         # Hide the WA stop button if it was visible
         self.btn_stop_wa.setVisible(False)
 
+        # Hide the invoice detail panel and let sidebar fill full width
+        self.invoice_view.setVisible(False)
+
         # Remove all customer cards from the sidebar (visual clear only, no DB delete)
         while self.customer_list_layout.count():
             item = self.customer_list_layout.takeAt(0)
@@ -649,29 +963,23 @@ class MainWindow(QMainWindow):
     def setup_invoice_container(self):
         """Combines the customer sidebar and the actual invoice editor."""
         self.invoice_container = QWidget()
-        layout = QHBoxLayout(self.invoice_container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self.invoice_container_layout = QHBoxLayout(self.invoice_container)
+        self.invoice_container_layout.setContentsMargins(0, 0, 0, 0)
+        self.invoice_container_layout.setSpacing(0)
 
-        self.splitter = QSplitter(Qt.Horizontal)
-        layout.addWidget(self.splitter)
-
-        # Sidebar (Customer List)
+        # Sidebar (Customer List) — fills full width by default
         self.setup_sidebar()
-        self.splitter.addWidget(self.sidebar)
+        self.invoice_container_layout.addWidget(self.sidebar, 1)
 
-        # Invoice View (Editor)
+        # Invoice View (Editor) — hidden until a customer is selected
         self.setup_invoice_view()
-        self.splitter.addWidget(self.invoice_view)
-
-        self.splitter.setStretchFactor(0, 0)
-        self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([330, 920])
+        self.invoice_container_layout.addWidget(self.invoice_view, 1)
+        self.invoice_view.setVisible(False)
 
     def setup_sidebar(self):
         self.sidebar = QFrame()
         self.sidebar.setObjectName("sidebar")
-        self.sidebar.setMinimumWidth(290)
+        self.sidebar.setMinimumWidth(200)
         self.sidebar.setStyleSheet("""
             QFrame#sidebar {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -821,8 +1129,14 @@ class MainWindow(QMainWindow):
         self.btn_view.setStyleSheet(BTN_GHOST)
         self.btn_view.clicked.connect(self.on_view_saved_pdf)
         
-        self.btn_whatsapp = QPushButton("Send WhatsApp")
+        self.btn_share_wa = QPushButton("Share WA")
+        self.btn_share_wa.setStyleSheet(BTN_SHARE_WA)
+        self.btn_share_wa.setToolTip("Generate PDF, copy to clipboard, and open WhatsApp chat")
+        self.btn_share_wa.clicked.connect(self.on_share_whatsapp)
+
+        self.btn_whatsapp = QPushButton("Send WA")
         self.btn_whatsapp.setStyleSheet(BTN_SUCCESS)
+        self.btn_whatsapp.setToolTip("Auto-paste & send PDF via WhatsApp")
         self.btn_whatsapp.clicked.connect(self.on_send_whatsapp)
         
         # Separator
@@ -853,6 +1167,7 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(self.btn_preview)
         action_layout.addWidget(self.btn_pdf)
         action_layout.addWidget(self.btn_view)
+        action_layout.addWidget(self.btn_share_wa)
         action_layout.addWidget(self.btn_whatsapp)
         action_layout.addWidget(sep)
         action_layout.addWidget(self.btn_pdf_all)
@@ -979,11 +1294,114 @@ class MainWindow(QMainWindow):
             card = CustomerCard(name, item_count or 0, total or 0.0, p_str, status or "Draft")
             card.clicked.connect(self.on_customer_selected)
             card.sendWhatsAppRequested.connect(self.on_card_send_whatsapp)
+            card.shareWhatsAppRequested.connect(self.on_card_share_whatsapp)
+            card.copyBillRequested.connect(self.on_card_copy_bill)
             card.generatePdfRequested.connect(self.on_card_generate_pdf)
             card.deleteRequested.connect(self.on_card_delete)
             self.customer_list_layout.addWidget(card)
             
         self.sidebar.setUpdatesEnabled(True)
+
+    def on_card_copy_bill(self, name, phone):
+        """Handle Copy Bill button — copies full invoice text to clipboard silently."""
+        if not phone or phone.strip() == "" or phone == "None":
+            phone = DataRepository.find_phone_by_name(name)
+
+        invoice, items = DataRepository.get_latest_invoice_by_details(name, phone)
+        
+        if not invoice:
+            QMessageBox.warning(self, "No Invoice", f"No invoice found for <b>{name}</b>.")
+            return
+
+        # Build the full bill text with all item details
+        invoice_no = invoice[1]
+        subtotal = invoice[2]
+        delivery_fee = 10.00
+        final_total = subtotal + delivery_fee
+
+        # Item lines
+        item_lines = ""
+        for desc, qty, price, sub in items:
+            item_lines += f"  - {desc} — ${sub:,.2f}\n"
+
+        bill_text = (
+            f"Hello {name},\n\n"
+            f"Your invoice {invoice_no} is ready.\n\n"
+            f"Items:\n"
+            f"{item_lines}\n"
+            f"Subtotal: ${subtotal:,.2f}\n"
+            f"Delivery Fee: ${delivery_fee:,.2f}\n"
+            f"Total Amount: ${final_total:,.2f}\n\n"
+            f"_NOTE: If you have paid beforehand or are self-collecting, please deduct the $10.00 delivery fee from the total amount._\n\n"
+            f"*Payment via PayNow:*\n"
+            f"PayNow No: 87610607\n"
+            f"Name: Watie\n\n"
+            f"After payment, please send the receipt to +65 89093836\n"
+            f"For any other enquiries, contact the same number.\n\n"
+            f"Thank you for your purchase!"
+        )
+
+        QApplication.clipboard().setText(bill_text)
+        # Show a brief, non-intrusive status bar message instead of a popup
+        self.statusBar().showMessage(f"✓  Bill copied for {name} — press Ctrl+V to paste", 3500)
+
+    def on_card_share_whatsapp(self, name, phone):
+        """Handle Share WA button from the customer card in sidebar.
+        Generates PDF, copies to clipboard, opens WhatsApp chat — user sends manually."""
+        if not phone or phone.strip() == "" or phone == "None":
+            phone = DataRepository.find_phone_by_name(name)
+        
+        if not phone:
+            QMessageBox.warning(self, "No Phone Number", 
+                f"No phone number found for <b>{name}</b>.<br><br>"
+                "Please add it in the <b>Details</b> section first.")
+            return
+
+        invoice, items = DataRepository.get_latest_invoice_by_details(name, phone)
+        
+        if not invoice:
+            QMessageBox.warning(self, "No Invoice", f"No invoice found for <b>{name}</b>.")
+            return
+        
+        # Step 1: Ensure PDF exists (auto-generate if needed)
+        pdf_path = invoice[5] if invoice and len(invoice) > 5 else None
+        if not pdf_path or not os.path.exists(pdf_path):
+            try:
+                pdf_path = self.pdf_engine.generate(
+                    customer_name=name,
+                    invoice_number=invoice[1],
+                    items=items,
+                    total_amount=invoice[2]
+                )
+                DataRepository.update_invoice_pdf(invoice[0], pdf_path)
+                self.refresh_customer_list()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to generate PDF: {str(e)}")
+                return
+
+        # Step 2: Copy PDF to clipboard
+        try:
+            mime_data = QMimeData()
+            mime_data.setUrls([QUrl.fromLocalFile(os.path.abspath(pdf_path))])
+            QApplication.clipboard().setMimeData(mime_data)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to copy PDF: {str(e)}")
+            return
+
+        # Step 3: Open WhatsApp chat with invoice message (no automation)
+        try:
+            self.whatsapp_bridge.send_with_message(
+                phone=phone, customer_name=name,
+                invoice_no=invoice[1], total_amount=invoice[2])
+            DataRepository.update_invoice_status(invoice[0], "Sent")
+            self.refresh_customer_list()
+            
+            QMessageBox.information(self, "Share WhatsApp",
+                f"PDF generated and copied to clipboard for <b>{name}</b>.<br><br>"
+                f"WhatsApp chat is now open.<br>"
+                f"Just paste (Ctrl+V) and send!")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open WhatsApp: {str(e)}")
 
     def on_card_send_whatsapp(self, name, phone):
         """Handle Send WhatsApp button from the customer card in sidebar.
@@ -1034,10 +1452,10 @@ class MainWindow(QMainWindow):
             mime_data.setUrls([QUrl.fromLocalFile(os.path.abspath(pdf_path))])
             QApplication.clipboard().setMimeData(mime_data)
 
-            # Open WhatsApp chat (sends PDF, not text)
-            success = self.whatsapp_bridge.send_invoice_pdf(
-                phone=phone,
-                customer_name=name
+            # Open WhatsApp chat with invoice message
+            success = self.whatsapp_bridge.send_with_message(
+                phone=phone, customer_name=name,
+                invoice_no=invoice[1], total_amount=invoice[2]
             )
             
             if success:
@@ -1054,11 +1472,11 @@ class MainWindow(QMainWindow):
                 msg_box.show()
                 
                 if pyautogui:
-                    # Wait 5s for WhatsApp to load, then paste & send
-                    QTimer.singleShot(5000, lambda: self.automate_paste_and_send(is_batch=False))
+                    # Optimized: Reduced wait from 5s to 3s for faster flow
+                    QTimer.singleShot(3000, lambda: self.automate_paste_and_send(is_batch=False))
                 
-                # Auto-close the message box after 3 seconds or when user clicks OK
-                QTimer.singleShot(4000, msg_box.accept)
+                # Auto-close the message box after 3 seconds
+                QTimer.singleShot(3000, msg_box.accept)
                 
                 self.refresh_customer_list()
                 
@@ -1110,6 +1528,9 @@ class MainWindow(QMainWindow):
         self.switch_page(1, reset_invoices=False) # Go to invoices but DON'T clear the view
         self.lbl_active_customer.setText(name)
         self.current_phone = phone
+
+        # Show the invoice detail panel
+        self.invoice_view.setVisible(True)
         
         invoice, items = DataRepository.get_latest_invoice_by_details(name, phone)
         
@@ -1253,6 +1674,66 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.critical(self, "File Not Found", f"The PDF file could not be found at:\n{pdf_path}")
 
+    def on_share_whatsapp(self):
+        """Share WhatsApp — manual flow for the currently selected invoice.
+        Generates PDF, copies to clipboard, opens WhatsApp chat."""
+        customer_name = self.lbl_active_customer.text()
+        phone = self.current_phone
+        
+        if not self.current_invoice_id:
+            QMessageBox.warning(self, "Error", "No invoice selected.")
+            return
+
+        if not phone or phone.strip() == "" or phone == "None":
+            phone = DataRepository.find_phone_by_name(customer_name)
+            self.current_phone = phone
+            
+        if not phone:
+            QMessageBox.warning(self, "No Phone Number", 
+                f"No phone number found for <b>{customer_name}</b>.<br><br>"
+                "Please add it via the <b>Details</b> section.")
+            return
+
+        # Get PDF Path for this invoice
+        invoice, items = DataRepository.get_latest_invoice_by_details(customer_name, phone)
+        pdf_path = invoice[5] if invoice and len(invoice) > 5 else None
+
+        # Auto-generate if no PDF exists
+        if not pdf_path or not os.path.exists(pdf_path):
+            try:
+                pdf_path = self.pdf_engine.generate(
+                    customer_name=customer_name,
+                    invoice_number=invoice[1],
+                    items=items,
+                    total_amount=invoice[2]
+                )
+                DataRepository.update_invoice_pdf(invoice[0], pdf_path)
+                self.refresh_customer_list()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to generate PDF: {str(e)}")
+                return
+
+        try:
+            # Copy PDF to Clipboard
+            mime_data = QMimeData()
+            mime_data.setUrls([QUrl.fromLocalFile(os.path.abspath(pdf_path))])
+            QApplication.clipboard().setMimeData(mime_data)
+
+            # Open WhatsApp chat with invoice message (no automation)
+            self.whatsapp_bridge.send_with_message(
+                phone=phone, customer_name=customer_name,
+                invoice_no=invoice[1], total_amount=invoice[2])
+            DataRepository.update_invoice_status(self.current_invoice_id, "Sent")
+            self.refresh_customer_list()
+            
+            QMessageBox.information(self, "Share WhatsApp",
+                f"PDF generated and copied to clipboard for <b>{customer_name}</b>.<br><br>"
+                f"WhatsApp chat is now open.<br>"
+                f"Just paste (Ctrl+V) and send!")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to share via WhatsApp: {str(e)}")
+
     def on_send_whatsapp(self):
         """Send the generated PDF via WhatsApp for the currently selected invoice."""
         customer_name = self.lbl_active_customer.text()
@@ -1306,10 +1787,10 @@ class MainWindow(QMainWindow):
             mime_data.setUrls([QUrl.fromLocalFile(os.path.abspath(pdf_path))])
             QApplication.clipboard().setMimeData(mime_data)
 
-            # Open WhatsApp chat
-            success = self.whatsapp_bridge.send_invoice_pdf(
-                phone=phone,
-                customer_name=customer_name
+            # Open WhatsApp chat with invoice message
+            success = self.whatsapp_bridge.send_with_message(
+                phone=phone, customer_name=customer_name,
+                invoice_no=invoice[1], total_amount=invoice[2]
             )
             
             if success:
@@ -1326,11 +1807,11 @@ class MainWindow(QMainWindow):
                 msg_box.show()
 
                 if pyautogui:
-                    # Wait 5s for WhatsApp to load, then paste & send
-                    QTimer.singleShot(5000, lambda: self.automate_paste_and_send(is_batch=False))
+                    # Optimized: Reduced wait from 5s to 3s
+                    QTimer.singleShot(3000, lambda: self.automate_paste_and_send(is_batch=False))
                 
-                # Auto-close the message box after 4 seconds
-                QTimer.singleShot(4000, msg_box.accept)
+                # Auto-close the message box after 3 seconds
+                QTimer.singleShot(3000, msg_box.accept)
                 
                 self.refresh_customer_list()
                 
@@ -1386,7 +1867,7 @@ class MainWindow(QMainWindow):
         msg = (f"This will open <b>{len(self.send_queue)}</b> WhatsApp chats.<br><br>"
                "<b>Missing PDFs will be generated automatically.</b><br><br>"
                "<b>DO NOT touch your keyboard/mouse during this process.</b><br>"
-               "Each chat gets 5 seconds to load before auto-paste.<br><br>"
+               "Each chat now gets ~3 seconds to load before auto-paste.<br><br>"
                "Click 'Stop' at any time to cancel.")
         
         reply = QMessageBox.question(self, "Start Automation?", msg, QMessageBox.Yes | QMessageBox.No)
@@ -1394,6 +1875,7 @@ class MainWindow(QMainWindow):
             self.wa_all_stopped = False
             self.btn_stop_wa.setVisible(True)
             self.btn_whatsapp_all.setEnabled(False)
+            self.btn_wa_all_side.setEnabled(False) # Disable sidebar button too
             self.process_next_in_queue()
 
     def on_stop_whatsapp_all(self):
@@ -1402,6 +1884,7 @@ class MainWindow(QMainWindow):
         self.send_queue = []
         self.btn_stop_wa.setVisible(False)
         self.btn_whatsapp_all.setEnabled(True)
+        self.btn_wa_all_side.setEnabled(True) # Re-enable sidebar button
         QMessageBox.information(self, "Stopped", "WhatsApp automation has been stopped.")
         self.refresh_customer_list()
 
@@ -1412,6 +1895,7 @@ class MainWindow(QMainWindow):
         if not self.send_queue:
             self.btn_stop_wa.setVisible(False)
             self.btn_whatsapp_all.setEnabled(True)
+            self.btn_wa_all_side.setEnabled(True)
             QMessageBox.information(self, "Complete", "All WhatsApp messages have been processed!")
             self.refresh_customer_list()
             return
@@ -1439,50 +1923,54 @@ class MainWindow(QMainWindow):
 
         # Copy PDF to clipboard
         mime_data = QMimeData()
-        mime_data.setUrls([QUrl.fromLocalFile(os.path.abspath(inv[6]))])
+        mime_data.setUrls([QUrl.fromLocalFile(os.path.abspath(pdf_path))])
         QApplication.clipboard().setMimeData(mime_data)
         
-        # Open WhatsApp chat (send PDF, not text)
-        self.whatsapp_bridge.send_invoice_pdf(
+        # Open WhatsApp chat with invoice message
+        self.whatsapp_bridge.send_with_message(
             phone=inv[5],
-            customer_name=inv[4]
+            customer_name=inv[4],
+            invoice_no=inv[1],
+            total_amount=inv[2]
         )
         
         # Mark as sent
         DataRepository.update_invoice_status(inv[0], "Sent")
         
-        # Wait for browser and paste
+        # Wait for browser and paste - Reduced wait to 2.5s for initial chat load
         if pyautogui:
-            QTimer.singleShot(5000, lambda: self.automate_paste_and_send())
+            QTimer.singleShot(2500, lambda: self.automate_paste_and_send(is_batch=True))
         else:
             QTimer.singleShot(2000, self.process_next_in_queue)
 
     def automate_paste_and_send(self, is_batch=True):
-        if is_batch and self.wa_all_stopped:
+        """Asynchronous automation to prevent UI lag."""
+        if (is_batch and self.wa_all_stopped) or not pyautogui:
             return
-            
-        if pyautogui:
-            # First, make sure we have a little focus delay
-            time.sleep(0.5)
-            
-            # 1. Paste the PDF
+
+        # We use a chain of QTimer calls to avoid time.sleep (which blocks the UI)
+        def step1_paste():
+            if is_batch and self.wa_all_stopped: return
             pyautogui.hotkey('ctrl', 'v')
-            # Increase wait to 4 seconds for slow computers
-            time.sleep(4.0) 
-            
-            # 2. Press Enter to send
-            # Triple enter strategy to be safe
-            pyautogui.press('enter') 
-            time.sleep(1.0)
+            # Wait for PDF to load in WA (usually fast, 1s is plenty)
+            QTimer.singleShot(1000, step2_enter)
+
+        def step2_enter():
+            if is_batch and self.wa_all_stopped: return
             pyautogui.press('enter')
-            time.sleep(0.5)
+            # Second enter handles the "Send" button in WA Desktop/Web
+            QTimer.singleShot(500, step3_confirm_send)
+
+        def step3_confirm_send():
+            if is_batch and self.wa_all_stopped: return
             pyautogui.press('enter')
             
-            time.sleep(1)
-            
-            # 3. If batch, move to next
+            # Step 4: After cooldown, move to next
             if is_batch:
-                QTimer.singleShot(2000, self.process_next_in_queue)
+                QTimer.singleShot(1500, self.process_next_in_queue)
+
+        # Initial focus delay
+        QTimer.singleShot(500, step1_paste)
 
     def on_dashboard_import_selected(self, invoice_ids):
         """Called when a user clicks an old import on the dashboard."""
@@ -1490,3 +1978,8 @@ class MainWindow(QMainWindow):
         self.search_input.clear()
         self.refresh_customer_list()
         self.switch_page(1, reset_invoices=False)
+
+    def open_settings(self):
+        """Open the App Settings / Customisation dialog."""
+        dlg = SettingsDialog(self)
+        dlg.exec_()
