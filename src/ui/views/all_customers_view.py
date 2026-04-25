@@ -120,7 +120,7 @@ class CustomerDetailPopup(QDialog):
                     background: {bg};
                     border: 1px solid {border_color};
                     border-radius: 10px;
-                    min-width: 120px;
+                    min-width: 80px;
                 }}
             """)
             stat_layout = QVBoxLayout(stat_frame)

@@ -722,3 +722,66 @@ class DataRepository:
                 unique.append((name, phone or '', address or ''))
 
         return unique
+
+    @staticmethod
+    def get_import_invoice_details(import_id):
+        """Returns all invoice items for a given import as a flat list of rows.
+        Each row: (customer_name, phone, product_description, unit_price, item_id, invoice_id)
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT invoice_ids FROM import_logs WHERE id = ?", (import_id,))
+        row = cursor.fetchone()
+        if not row or not row[0]:
+            return []
+
+        invoice_ids = [int(i) for i in row[0].split(',') if i.strip()]
+        if not invoice_ids:
+            return []
+
+        placeholders = ",".join(["?"] * len(invoice_ids))
+        cursor.execute(f"""
+            SELECT c.name, c.phone, ii.description, ii.unit_price, ii.id, i.id
+            FROM invoice_items ii
+            JOIN invoices i ON ii.invoice_id = i.id
+            JOIN customers c ON i.customer_id = c.id
+            WHERE i.id IN ({placeholders})
+            ORDER BY c.name ASC, ii.id ASC
+        """, invoice_ids)
+
+        return cursor.fetchall()
+
+    @staticmethod
+    def clear_import_invoices(import_id):
+        """Deletes all invoices and items associated with an import log (but keeps the log)."""
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT invoice_ids FROM import_logs WHERE id = ?", (import_id,))
+        row = cursor.fetchone()
+        if not row or not row[0]:
+            return
+
+        invoice_ids = [int(i) for i in row[0].split(',') if i.strip()]
+        if not invoice_ids:
+            return
+
+        placeholders = ",".join(["?"] * len(invoice_ids))
+        cursor.execute(f"DELETE FROM invoice_items WHERE invoice_id IN ({placeholders})", invoice_ids)
+        cursor.execute(f"DELETE FROM invoices WHERE id IN ({placeholders})", invoice_ids)
+        conn.commit()
+
+    @staticmethod
+    def update_import_log(import_id, customer_count, invoice_count, total_value, new_invoice_ids):
+        """Updates an existing import log entry with new stats and invoice IDs."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        ids_str = ",".join(map(str, new_invoice_ids)) if new_invoice_ids else ""
+        import_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute("""
+            UPDATE import_logs 
+            SET customer_count = ?, invoice_count = ?, total_value = ?, invoice_ids = ?, import_date = ?
+            WHERE id = ?
+        """, (customer_count, invoice_count, total_value, ids_str, import_date, import_id))
+        conn.commit()

@@ -19,11 +19,11 @@ class RevenueCard(QFrame):
                     stop:0 rgba(30, 41, 59, 0.7), stop:1 rgba(15, 23, 42, 0.9));
                 border: 1px solid {color}30;
                 border-radius: 16px;
-                min-width: 180px;
+                min-width: 100px;
             }}
         """)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(15, 15, 15, 15)
 
         lbl_title = QLabel(title)
         lbl_title.setStyleSheet("color: #94a3b8; font-size: 13px; font-weight: 600; text-transform: uppercase; background: transparent;")
@@ -193,10 +193,12 @@ class ImportHistoryCard(QFrame):
     """A card showing a summary of a single import log."""
     clicked = Signal(list) # Emits the invoice_ids for this import
     deleteRequested = Signal(int) # Emits the import_id
+    editRequested = Signal(int, str) # Emits (import_id, file_name)
 
     def __init__(self, import_id, file_name, date_str, cust_count, inv_count, total_val, invoice_ids_str):
         super().__init__()
         self.import_id = import_id
+        self._file_name = file_name
         self.invoice_ids = [int(i) for i in invoice_ids_str.split(',')] if invoice_ids_str else []
         try:
             dt = datetime.datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
@@ -261,6 +263,27 @@ class ImportHistoryCard(QFrame):
         stats_lbl = QLabel(f"{cust_count} Customers  |  {inv_count} Invoices  |  ${safe_val:,.2f}")
         stats_lbl.setStyleSheet("color: #a5b4fc; font-size: 13px; background: transparent;")
         
+        self.btn_edit = QPushButton("Edit")
+        self.btn_edit.setFixedSize(80, 32)
+        self.btn_edit.setCursor(Qt.ArrowCursor)
+        self.btn_edit.setStyleSheet("""
+            QPushButton {
+                background: rgba(99, 102, 241, 0.1);
+                border: 1px solid rgba(99, 102, 241, 0.2);
+                border-radius: 6px;
+                color: #a5b4fc;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 10px;
+            }
+            QPushButton:hover {
+                background: #6366f1;
+                color: white;
+                border-color: #6366f1;
+            }
+        """)
+        self.btn_edit.clicked.connect(lambda: self.editRequested.emit(self.import_id, self._file_name))
+
         self.btn_delete = QPushButton("Delete")
         self.btn_delete.setFixedSize(80, 32)
         self.btn_delete.setCursor(Qt.ArrowCursor)
@@ -285,11 +308,13 @@ class ImportHistoryCard(QFrame):
         layout.addLayout(info)
         layout.addStretch()
         layout.addWidget(stats_lbl)
-        layout.addSpacing(12)
+        layout.addSpacing(8)
+        layout.addWidget(self.btn_edit)
+        layout.addSpacing(4)
         layout.addWidget(self.btn_delete)
 
     def mousePressEvent(self, event):
-        if not self.btn_delete.underMouse():
+        if not self.btn_delete.underMouse() and not self.btn_edit.underMouse():
             self.clicked.emit(self.invoice_ids)
         super().mousePressEvent(event)
 
@@ -297,6 +322,7 @@ class ImportHistoryCard(QFrame):
 class DashboardView(QWidget):
     startImportRequested = Signal()
     viewInvoicesRequested = Signal(list)
+    editImportRequested = Signal(int, str)  # (import_id, file_name)
 
     def __init__(self):
         super().__init__()
@@ -315,8 +341,8 @@ class DashboardView(QWidget):
         content = QWidget()
         content.setStyleSheet("background: #0f172a;")
         self.layout = QVBoxLayout(content)
-        self.layout.setContentsMargins(30, 30, 30, 30)
-        self.layout.setSpacing(25)
+        self.layout.setContentsMargins(15, 15, 15, 15)
+        self.layout.setSpacing(15)
         
         # 1. Welcome Header
         header_layout = QHBoxLayout()
@@ -328,16 +354,6 @@ class DashboardView(QWidget):
         welcome.addWidget(title)
         welcome.addWidget(subtitle)
         
-        # Dashboard Logo
-        from src.utils.paths import get_base_dir
-        logo_path = os.path.join(get_base_dir(), "assets", "icons", "logo.png")
-        logo_label = QLabel()
-        if os.path.exists(logo_path):
-            logo_label.setPixmap(QPixmap(logo_path).scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            logo_label.setFixedSize(65, 65)
-            logo_label.setStyleSheet("background: transparent; border: none;")
-        
-        header_layout.addWidget(logo_label)
         header_layout.addLayout(welcome)
         
         btn_import = QPushButton("New Import")
@@ -353,8 +369,6 @@ class DashboardView(QWidget):
             QPushButton:hover { background: #4f46e5; }
         """)
         btn_import.clicked.connect(lambda: self.startImportRequested.emit())
-        
-        header_layout.addLayout(welcome)
         header_layout.addStretch()
         header_layout.addWidget(btn_import)
         self.layout.addLayout(header_layout)
@@ -496,12 +510,17 @@ class DashboardView(QWidget):
                 for imp_id, fname, date, c_cnt, i_cnt, val, ids_str in imports:
                     card = ImportHistoryCard(imp_id, fname, date, c_cnt, i_cnt, val, ids_str)
                     card.clicked.connect(self.viewInvoicesRequested.emit)
+                    card.editRequested.connect(self._on_edit_import)
                     card.deleteRequested.connect(self.on_delete_import)
                     self.history_layout.addWidget(card)
         except Exception as e:
             err_lbl = QLabel(f"Dashboard error: {str(e)}")
             err_lbl.setStyleSheet("color: #f87171; font-style: italic; background: transparent;")
             self.history_layout.addWidget(err_lbl)
+
+    def _on_edit_import(self, import_id, file_name):
+        """Relay the edit signal to the main window."""
+        self.editImportRequested.emit(import_id, file_name)
 
     def on_delete_import(self, import_id):
         confirm = QMessageBox(self)

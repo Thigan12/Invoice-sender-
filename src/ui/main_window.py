@@ -764,6 +764,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("AutoBillr Pro")
         self.resize(1250, 850)
+        self.setMinimumSize(800, 600)
 
         # Set Window Icon
         from src.utils.paths import get_base_dir
@@ -818,6 +819,7 @@ class MainWindow(QMainWindow):
         self.dashboard_view = DashboardView()
         self.dashboard_view.startImportRequested.connect(lambda: self.switch_page(2))
         self.dashboard_view.viewInvoicesRequested.connect(self.on_dashboard_import_selected)
+        self.dashboard_view.editImportRequested.connect(self.on_edit_import)
         self.content_area.addWidget(self.dashboard_view)
 
         # --- Invoices View (Index 1) ---
@@ -2095,6 +2097,13 @@ class MainWindow(QMainWindow):
         self.search_input.clear()
         self.refresh_customer_list()
         self.switch_page(1, reset_invoices=False)
+
+    def on_edit_import(self, import_id, file_name):
+        """Open the Edit Import dialog for a specific import."""
+        from src.ui.dialogs.edit_import_dialog import EditImportDialog
+        dlg = EditImportDialog(self, import_id, file_name)
+        dlg.import_updated.connect(self.dashboard_view.refresh_data)
+        dlg.exec()
 
     def open_settings(self):
         """Open the App Settings / Customisation dialog."""

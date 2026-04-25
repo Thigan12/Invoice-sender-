@@ -376,9 +376,9 @@ class ImportView(QWidget):
                     invoice_items.append({'name': corrected_name, 'qty': 1, 'price': price})
                     total_amount += price
                 
-                ts = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+                date_str = datetime.datetime.now().strftime('%d%m%Y')
                 rand = random.randint(1000, 9999)
-                inv_no = f"INV-{ts}-{customer_id}-{rand}"
+                inv_no = f"INV-{date_str}-{rand}"
                 
                 invoice_id = DataRepository.save_invoice(customer_id, inv_no, total_amount, invoice_items)
                 imported_invoice_ids.append(invoice_id)
