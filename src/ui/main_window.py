@@ -762,7 +762,9 @@ class SettingsDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AutoBillr Pro")
+        from src.version import __version__
+        self.__version__ = __version__
+        self.setWindowTitle("AutoBillr")
         self.resize(1250, 850)
         self.setMinimumSize(800, 600)
 
@@ -1012,7 +1014,7 @@ class MainWindow(QMainWindow):
         footer_box.setSpacing(2)
         footer_box.setContentsMargins(0, 4, 0, 8)
 
-        footer_ver = QLabel("v2.0 — Professional")
+        footer_ver = QLabel(f"v{self.__version__}")
         footer_ver.setAlignment(Qt.AlignCenter)
         footer_ver.setStyleSheet("font-size: 10px; color: #334155; background: transparent;")
 
