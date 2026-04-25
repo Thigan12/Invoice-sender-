@@ -49,6 +49,13 @@ def main():
     window = MainWindow()
     window.show()
     
+    # Close the PyInstaller splash screen if it's running
+    try:
+        import pyi_splash
+        pyi_splash.close()
+    except ImportError:
+        pass
+    
     sys.exit(app.exec())
 
 if __name__ == "__main__":
