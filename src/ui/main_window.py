@@ -16,6 +16,8 @@ from src.ui.views.import_view import ImportView
 from src.ui.views.customer_details_view import CustomerDetailsView
 from src.ui.views.dashboard_view import DashboardView
 from src.ui.views.all_customers_view import AllCustomersView
+from src.ui.views.delivery_view import DeliveryView
+from src.ui.views.template_view import TemplateView
 from src.core.pdf_engine import PDFEngine
 from src.core.whatsapp import WhatsAppBridge
 from src.database.repository import DataRepository
@@ -603,6 +605,52 @@ class SettingsDialog(QDialog):
         side_row.addStretch()
         layout.addLayout(side_row)
 
+        sep_mid = QFrame()
+        sep_mid.setFrameShape(QFrame.HLine)
+        sep_mid.setStyleSheet("color: rgba(99,102,241,0.2);")
+        layout.addWidget(sep_mid)
+
+        # ---- Database Location ----
+        db_lbl = QLabel("Database Location")
+        db_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #94a3b8;")
+        layout.addWidget(db_lbl)
+
+        db_desc = QLabel("Point to a shared folder to use the same database on multiple computers.")
+        db_desc.setStyleSheet("font-size: 11px; color: #64748b;")
+        db_desc.setWordWrap(True)
+        layout.addWidget(db_desc)
+
+        from src.utils.paths import get_db_path
+        self.lbl_db_path = QLabel(get_db_path())
+        self.lbl_db_path.setWordWrap(True)
+        self.lbl_db_path.setStyleSheet("""
+            font-size: 11px;
+            color: #a5b4fc;
+            background: rgba(15,23,42,0.6);
+            border: 1px solid rgba(99,102,241,0.15);
+            border-radius: 6px;
+            padding: 8px 10px;
+        """)
+        layout.addWidget(self.lbl_db_path)
+
+        db_btn_row = QHBoxLayout()
+        db_btn_row.setSpacing(8)
+
+        btn_browse_db = QPushButton("Browse")
+        btn_browse_db.setFixedHeight(34)
+        btn_browse_db.setStyleSheet(BTN_GHOST)
+        btn_browse_db.clicked.connect(self._browse_db)
+
+        btn_reset_db = QPushButton("Reset to Default")
+        btn_reset_db.setFixedHeight(34)
+        btn_reset_db.setStyleSheet(BTN_GHOST)
+        btn_reset_db.clicked.connect(self._reset_db_path)
+
+        db_btn_row.addWidget(btn_browse_db)
+        db_btn_row.addWidget(btn_reset_db)
+        db_btn_row.addStretch()
+        layout.addLayout(db_btn_row)
+
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.HLine)
         sep2.setStyleSheet("color: rgba(99,102,241,0.2);")
@@ -657,11 +705,12 @@ class SettingsDialog(QDialog):
             self.main_win.resize(w, h)
             self.main_win.showNormal()
 
-        # Apply sidebar width
+        # Apply sidebar width via splitter
         sw = self.spin_sw.value()
         try:
-            self.main_win.sidebar.setMinimumWidth(sw)
-            self.main_win.sidebar.setMaximumWidth(sw)
+            if hasattr(self.main_win, 'invoice_splitter'):
+                total = self.main_win.invoice_splitter.width()
+                self.main_win.invoice_splitter.setSizes([sw, total - sw])
         except Exception:
             pass
 
@@ -677,12 +726,51 @@ class SettingsDialog(QDialog):
         self.preset_combo.setCurrentIndex(2)
         self._apply()
 
+    def _browse_db(self):
+        from PySide6.QtWidgets import QFileDialog
+        from src.utils.paths import set_db_directory, get_db_path
+        from src.database.connection import init_db
+
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Database Folder", "",
+            QFileDialog.ShowDirsOnly)
+        if not folder:
+            return
+
+        set_db_directory(folder)
+        new_path = get_db_path()
+        self.lbl_db_path.setText(new_path)
+
+        # Initialize schema at new location (creates tables if DB doesn't exist)
+        init_db()
+
+        QMessageBox.information(self, "Database Updated",
+            f"Database location changed to:\n\n{new_path}\n\n"
+            "Please restart the application for all views to reload.")
+
+    def _reset_db_path(self):
+        from src.utils.paths import set_db_directory, get_db_path
+
+        set_db_directory("")
+        default_path = get_db_path()
+        self.lbl_db_path.setText(default_path)
+
+        QMessageBox.information(self, "Database Reset",
+            f"Database location reset to default:\n\n{default_path}\n\n"
+            "Please restart the application for all views to reload.")
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Invoice Sender Pro")
+        self.setWindowTitle("AutoBillr Pro")
         self.resize(1250, 850)
+
+        # Set Window Icon
+        from src.utils.paths import get_base_dir
+        logo_path = os.path.join(get_base_dir(), "assets", "icons", "logo.png")
+        if os.path.exists(logo_path):
+            from PySide6.QtGui import QIcon
+            self.setWindowIcon(QIcon(logo_path))
 
         # Status bar for non-intrusive notifications
         self._status_bar = QStatusBar()
@@ -723,6 +811,7 @@ class MainWindow(QMainWindow):
         # 2. Main Stacked Widget
         self.content_area = QStackedWidget()
         self.content_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.content_area.setStyleSheet("background: #0f172a; border: none;")
         self.main_layout.addWidget(self.content_area, 1)
 
         # --- Dashboard View (Index 0) ---
@@ -748,6 +837,14 @@ class MainWindow(QMainWindow):
         # --- All Customers / Details View (Index 4) ---
         self.all_customers_view = AllCustomersView()
         self.content_area.addWidget(self.all_customers_view)
+
+        # --- Delivery View (Index 5) ---
+        self.delivery_view = DeliveryView()
+        self.content_area.addWidget(self.delivery_view)
+
+        # --- Template View (Index 6) ---
+        self.template_view = TemplateView()
+        self.content_area.addWidget(self.template_view)
 
         # Start on Dashboard
         self.switch_page(0)
@@ -801,44 +898,47 @@ class MainWindow(QMainWindow):
         logo_layout.setContentsMargins(20, 24, 20, 18)
         logo_layout.setSpacing(6)
 
-        # Logo icon row
-        logo_icon_row = QHBoxLayout()
-        logo_icon_row.setSpacing(10)
+        # Logo row (now centered and larger)
+        logo_row = QHBoxLayout()
+        logo_row.setAlignment(Qt.AlignCenter)
 
-        logo_icon = QLabel("IP")
-        logo_icon.setFixedSize(40, 40)
-        logo_icon.setAlignment(Qt.AlignCenter)
-        logo_icon.setStyleSheet("""
-            QLabel {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #6366f1, stop:1 #8b5cf6);
-                border-radius: 10px;
-                font-size: 16px;
-                font-weight: 900;
-                color: white;
-            }
-        """)
+        logo_icon = QLabel()
+        
+        from src.utils.paths import get_base_dir
+        logo_path = os.path.join(get_base_dir(), "assets", "icons", "logo.png")
+        
+        if os.path.exists(logo_path):
+            from PySide6.QtGui import QPixmap
+            # Maximum width for sidebar is 220, so 160-180 is good
+            pixmap = QPixmap(logo_path).scaled(160, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_icon.setPixmap(pixmap)
+            logo_icon.setFixedSize(160, 80) # Adjust height as needed for horizontal logo
+            logo_icon.setStyleSheet("background: transparent; border: none;")
+        else:
+            logo_icon.setText("AB")
+            logo_icon.setFixedSize(60, 60)
+            logo_icon.setAlignment(Qt.AlignCenter)
+            logo_icon.setStyleSheet("""
+                QLabel {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                        stop:0 #6366f1, stop:1 #8b5cf6);
+                    border-radius: 15px;
+                    font-size: 24px;
+                    font-weight: 900;
+                    color: white;
+                }
+            """)
 
-        logo_text = QLabel("InvoicePro")
-        logo_text.setStyleSheet("""
-            font-size: 20px;
-            font-weight: 800;
-            color: #e2e8f0;
-            background: transparent;
-            letter-spacing: -0.5px;
-        """)
+        logo_row.addWidget(logo_icon)
+        logo_layout.addLayout(logo_row)
 
-        logo_icon_row.addWidget(logo_icon)
-        logo_icon_row.addWidget(logo_text)
-        logo_icon_row.addStretch()
-        logo_layout.addLayout(logo_icon_row)
-
-        logo_sub = QLabel("Invoice Management")
+        logo_sub = QLabel("Invoice Management System")
+        logo_sub.setAlignment(Qt.AlignCenter)
         logo_sub.setStyleSheet("""
             font-size: 11px;
             color: #475569;
             background: transparent;
-            padding-left: 50px;
+            margin-top: 4px;
         """)
         logo_layout.addWidget(logo_sub)
 
@@ -864,7 +964,9 @@ class MainWindow(QMainWindow):
             ("Invoices", 1),
             ("Import", 2),
             ("Customers", 3),
-            ("Details", 4)
+            ("Details", 4),
+            ("Delivery", 5),
+            ("Template", 6)
         ]
 
         for label, idx in nav_data:
@@ -904,10 +1006,21 @@ class MainWindow(QMainWindow):
         rail_layout.addWidget(btn_settings)
 
         # ---- FOOTER ----
-        footer = QLabel("v2.0 — Professional")
-        footer.setAlignment(Qt.AlignCenter)
-        footer.setStyleSheet("font-size: 10px; color: #334155; background: transparent; padding: 8px;")
-        rail_layout.addWidget(footer)
+        footer_box = QVBoxLayout()
+        footer_box.setSpacing(2)
+        footer_box.setContentsMargins(0, 4, 0, 8)
+
+        footer_ver = QLabel("v2.0 — Professional")
+        footer_ver.setAlignment(Qt.AlignCenter)
+        footer_ver.setStyleSheet("font-size: 10px; color: #334155; background: transparent;")
+
+        footer_credit = QLabel("Created by R.Thigan")
+        footer_credit.setAlignment(Qt.AlignCenter)
+        footer_credit.setStyleSheet("font-size: 13px; color: #6366f1; font-weight: 800; background: transparent;")
+
+        footer_box.addWidget(footer_ver)
+        footer_box.addWidget(footer_credit)
+        rail_layout.addLayout(footer_box)
 
     def switch_page(self, index, reset_invoices=True):
         self.content_area.setCurrentIndex(index)
@@ -925,6 +1038,8 @@ class MainWindow(QMainWindow):
             self.refresh_customer_list()
         elif index == 4:
             self.all_customers_view.refresh_data()
+        elif index == 5:
+            self.delivery_view.refresh_imports()
 
     def reset_invoice_view(self):
         """Clears the entire invoice page to a 'fresh' state (does NOT delete any data)."""
@@ -961,20 +1076,42 @@ class MainWindow(QMainWindow):
                 item.widget().deleteLater()
 
     def setup_invoice_container(self):
-        """Combines the customer sidebar and the actual invoice editor."""
+        """Combines the customer sidebar and the actual invoice editor with a draggable splitter."""
         self.invoice_container = QWidget()
         self.invoice_container_layout = QHBoxLayout(self.invoice_container)
         self.invoice_container_layout.setContentsMargins(0, 0, 0, 0)
         self.invoice_container_layout.setSpacing(0)
 
-        # Sidebar (Customer List) — fills full width by default
+        # Draggable splitter between sidebar and invoice view
+        self.invoice_splitter = QSplitter(Qt.Horizontal)
+        self.invoice_splitter.setHandleWidth(5)
+        self.invoice_splitter.setStyleSheet("""
+            QSplitter::handle:horizontal {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 transparent, stop:0.4 rgba(99,102,241,0.35), stop:0.6 rgba(99,102,241,0.35), stop:1 transparent);
+                min-width: 5px;
+                max-width: 5px;
+            }
+            QSplitter::handle:horizontal:hover {
+                background: rgba(99,102,241,0.6);
+            }
+        """)
+
+        # Sidebar (Customer List)
         self.setup_sidebar()
-        self.invoice_container_layout.addWidget(self.sidebar, 1)
+        self.invoice_splitter.addWidget(self.sidebar)
 
         # Invoice View (Editor) — hidden until a customer is selected
         self.setup_invoice_view()
-        self.invoice_container_layout.addWidget(self.invoice_view, 1)
+        self.invoice_splitter.addWidget(self.invoice_view)
         self.invoice_view.setVisible(False)
+
+        # Set initial proportions (sidebar:invoice = 1:2)
+        self.invoice_splitter.setSizes([330, 660])
+        self.invoice_splitter.setStretchFactor(0, 1)
+        self.invoice_splitter.setStretchFactor(1, 2)
+
+        self.invoice_container_layout.addWidget(self.invoice_splitter)
 
     def setup_sidebar(self):
         self.sidebar = QFrame()
@@ -1099,8 +1236,32 @@ class MainWindow(QMainWindow):
             color: #e2e8f0;
             background: transparent;
         """)
+
+        # Copy name button
+        self.btn_copy_name = QPushButton("Copy")
+        self.btn_copy_name.setFixedSize(52, 28)
+        self.btn_copy_name.setCursor(Qt.PointingHandCursor)
+        self.btn_copy_name.setToolTip("Copy customer name to clipboard")
+        self.btn_copy_name.setStyleSheet("""
+            QPushButton {
+                background: rgba(99, 102, 241, 0.1);
+                border: 1px solid rgba(99, 102, 241, 0.25);
+                border-radius: 6px;
+                color: #a5b4fc;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background: rgba(99, 102, 241, 0.25);
+                color: #e0e7ff;
+                border-color: #6366f1;
+            }
+        """)
+        self.btn_copy_name.clicked.connect(self._copy_customer_name)
         
         top_bar.addWidget(self.lbl_active_customer)
+        top_bar.addSpacing(8)
+        top_bar.addWidget(self.btn_copy_name)
         top_bar.addStretch()
         invoice_layout.addLayout(top_bar)
         
@@ -1313,32 +1474,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Invoice", f"No invoice found for <b>{name}</b>.")
             return
 
-        # Build the full bill text with all item details
-        invoice_no = invoice[1]
-        subtotal = invoice[2]
-        delivery_fee = 10.00
-        final_total = subtotal + delivery_fee
-
-        # Item lines
-        item_lines = ""
-        for desc, qty, price, sub in items:
-            item_lines += f"  - {desc} — ${sub:,.2f}\n"
-
-        bill_text = (
-            f"Hello {name},\n\n"
-            f"Your invoice {invoice_no} is ready.\n\n"
-            f"Items:\n"
-            f"{item_lines}\n"
-            f"Subtotal: ${subtotal:,.2f}\n"
-            f"Delivery Fee: ${delivery_fee:,.2f}\n"
-            f"Total Amount: ${final_total:,.2f}\n\n"
-            f"_NOTE: If you have paid beforehand or are self-collecting, please deduct the $10.00 delivery fee from the total amount._\n\n"
-            f"*Payment via PayNow:*\n"
-            f"PayNow No: 87610607\n"
-            f"Name: Watie\n\n"
-            f"After payment, please send the receipt to +65 89093836\n"
-            f"For any other enquiries, contact the same number.\n\n"
-            f"Thank you for your purchase!"
+        # Build the full bill text with all item details using the dynamic template
+        bill_text = self.whatsapp_bridge.get_invoice_message(
+            customer_name=name,
+            invoice_no=invoice[1],
+            total_amount=invoice[2],
+            items=items
         )
 
         QApplication.clipboard().setText(bill_text)
@@ -1560,36 +1701,12 @@ class MainWindow(QMainWindow):
             self.current_invoice_id = None
             self.current_pdf_path = None
 
-        # Open the detail popup
-        popup = InvoiceCustomerPopup(
-            self, name, phone, invoice, items,
-            self.pdf_engine, self.whatsapp_bridge
-        )
-        popup.exec_()
-
-        # If user performed an action (gen pdf, send wa, delete), refresh
-        if popup.did_action:
-            self.refresh_customer_list()
-            # Re-load the table if customer still exists
-            inv2, items2 = DataRepository.get_latest_invoice_by_details(name, phone)
-            if inv2:
-                self.current_invoice_id = inv2[0]
-                self.current_total = inv2[2]
-                self.current_pdf_path = inv2[5]
-                self.lbl_total.setText(f"${self.current_total:,.2f}")
-                self.table.setRowCount(0)
-                for i, (desc, qty, price, sub) in enumerate(items2):
-                    self.table.insertRow(i)
-                    self.table.setItem(i, 0, QTableWidgetItem(desc))
-                    self.table.setItem(i, 1, QTableWidgetItem(f"${price:.2f}"))
-                    self.table.setItem(i, 2, QTableWidgetItem(f"${sub:.2f}"))
-            else:
-                # Customer was deleted
-                self.lbl_active_customer.setText("Select a Customer")
-                self.table.setRowCount(0)
-                self.lbl_total.setText("$0.00")
-                self.current_invoice_id = None
-                self.current_pdf_path = None
+    def _copy_customer_name(self):
+        """Copy the active customer name to clipboard."""
+        name = self.lbl_active_customer.text()
+        if name and name != "Select a Customer":
+            QApplication.clipboard().setText(name)
+            self.statusBar().showMessage(f"Copied: {name}", 2000)
 
     def on_preview(self):
         if not self.current_invoice_id:

@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QApplication
 from PySide6.QtCore import Qt, Signal
 
 class CustomerCard(QFrame):
@@ -54,7 +54,32 @@ class CustomerCard(QFrame):
             font-weight: 700;
         """)
         
+        # Copy name button
+        self.btn_copy_name = QPushButton("Copy")
+        self.btn_copy_name.setFixedSize(42, 22)
+        self.btn_copy_name.setCursor(Qt.PointingHandCursor)
+        self.btn_copy_name.setToolTip("Copy name to clipboard")
+        self.btn_copy_name.setStyleSheet("""
+            QPushButton {
+                background: rgba(99, 102, 241, 0.08);
+                border: 1px solid rgba(99, 102, 241, 0.2);
+                border-radius: 4px;
+                color: #818cf8;
+                font-size: 10px;
+                font-weight: 700;
+                padding: 0;
+            }
+            QPushButton:hover {
+                background: rgba(99, 102, 241, 0.25);
+                color: #e0e7ff;
+                border-color: #6366f1;
+            }
+        """)
+        self.btn_copy_name.clicked.connect(self._copy_name)
+
         header_row.addWidget(self.lbl_name)
+        header_row.addSpacing(4)
+        header_row.addWidget(self.btn_copy_name)
         header_row.addStretch()
         header_row.addWidget(self.lbl_status)
         
@@ -149,6 +174,10 @@ class CustomerCard(QFrame):
         layout.addLayout(header_row)
         layout.addWidget(self.lbl_details)
         layout.addLayout(actions_layout)
+
+    def _copy_name(self):
+        """Copy customer name to clipboard."""
+        QApplication.clipboard().setText(self.name)
 
     def mousePressEvent(self, event):
         # Only emit clicked if we didn't click a button

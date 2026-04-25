@@ -1,0 +1,16 @@
+{
+  "invoice_template": {
+    "business_name": "Mini Auction",
+    "business_phone": "+65 89093836",
+    "business_address": "",
+    "payment_method": "PayNow",
+    "payment_number": "+65 89093836",
+    "payment_name": "Mini auction",
+    "receipt_contact": "+65 89093836",
+    "delivery_fee": 10.0,
+    "self_collect_note": "If you have paid beforehand or are self-collecting, please deduct the ${fee} delivery fee from the total amount.",
+    "closing_message": "Thank you for your purchase!",
+    "footer_text": "",
+    "enquiry_text": "For any other enquiries, contact the same number."
+  }
+}

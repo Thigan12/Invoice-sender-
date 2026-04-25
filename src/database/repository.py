@@ -1,3 +1,4 @@
+import datetime
 from .connection import get_connection
 
 class DataRepository:
@@ -34,7 +35,6 @@ class DataRepository:
         
         cursor.execute(sql, params)
         rows = cursor.fetchall()
-        conn.close()
         return rows
 
     @staticmethod
@@ -62,7 +62,6 @@ class DataRepository:
         
         cursor.execute(sql, invoice_ids)
         rows = cursor.fetchall()
-        conn.close()
         return rows
 
     @staticmethod
@@ -112,7 +111,6 @@ class DataRepository:
                             (new_address, customer_id)
                         )
                     conn.commit()
-                    conn.close()
                     return customer_id
 
             cursor.execute(
@@ -122,7 +120,6 @@ class DataRepository:
             customer_id = cursor.lastrowid
 
         conn.commit()
-        conn.close()
         return customer_id
 
     @staticmethod
@@ -177,7 +174,7 @@ class DataRepository:
 
             conn.commit()
         finally:
-            conn.close()
+            pass
         return removed
 
     @staticmethod
@@ -187,7 +184,6 @@ class DataRepository:
         cursor = conn.cursor()
         cursor.execute("SELECT id, name, phone, address FROM customers ORDER BY name ASC")
         rows = cursor.fetchall()
-        conn.close()
         return rows
 
     @staticmethod
@@ -197,7 +193,6 @@ class DataRepository:
         cursor = conn.cursor()
         cursor.execute("UPDATE customers SET name = ?, phone = ?, address = ? WHERE id = ?", (name, phone, address, cust_id))
         conn.commit()
-        conn.close()
 
     @staticmethod
     def get_customer_address(name, phone):
@@ -208,7 +203,6 @@ class DataRepository:
         phone = str(phone).strip() if phone else ""
         cursor.execute("SELECT address FROM customers WHERE LOWER(name) = LOWER(?) AND phone = ?", (name, phone))
         row = cursor.fetchone()
-        conn.close()
         return row[0] if row else None
 
     @staticmethod
@@ -256,7 +250,7 @@ class DataRepository:
                     added += 1
             conn.commit()
         finally:
-            conn.close()
+            pass
         return added, updated, skipped
 
     @staticmethod
@@ -268,7 +262,6 @@ class DataRepository:
         # Look for the latest phone number assigned to this name
         cursor.execute("SELECT phone FROM customers WHERE LOWER(name) = LOWER(?) AND phone != '' ORDER BY id DESC LIMIT 1", (name,))
         row = cursor.fetchone()
-        conn.close()
         return row[0] if row else None
 
     @staticmethod
@@ -283,7 +276,7 @@ class DataRepository:
             cursor.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
             conn.commit()
         finally:
-            conn.close()
+            pass
 
     @staticmethod
     def save_invoice(customer_id, invoice_number, total_amount, items):
@@ -296,10 +289,12 @@ class DataRepository:
         
         try:
             # 1. Create Invoice record (Use INSERT OR IGNORE to prevent fail if duplicate number)
+            # Use local time for issue_date
+            issue_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             cursor.execute("""
-                INSERT OR IGNORE INTO invoices (invoice_number, customer_id, total_amount, status)
-                VALUES (?, ?, ?, ?)
-            """, (invoice_number, customer_id, total_amount, 'Draft'))
+                INSERT OR IGNORE INTO invoices (invoice_number, customer_id, total_amount, status, issue_date)
+                VALUES (?, ?, ?, ?, ?)
+            """, (invoice_number, customer_id, total_amount, 'Draft', issue_date))
             
             invoice_id = cursor.lastrowid
             
@@ -319,7 +314,8 @@ class DataRepository:
                 """, (invoice_id, item['name'], item['qty'], item['price'], subtotal))
             
             # 3. Update customer's last invoice date
-            cursor.execute("UPDATE customers SET last_invoice_date = CURRENT_TIMESTAMP WHERE id = ?", (customer_id,))
+            local_now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute("UPDATE customers SET last_invoice_date = ? WHERE id = ?", (local_now, customer_id))
             
             conn.commit()
             return invoice_id
@@ -327,7 +323,7 @@ class DataRepository:
             conn.rollback()
             raise e
         finally:
-            conn.close()
+            pass
 
     @staticmethod
     def delete_customer_by_id(cust_id):
@@ -343,7 +339,7 @@ class DataRepository:
             
             conn.commit()
         finally:
-            conn.close()
+            pass
 
     @staticmethod
     def delete_customer_by_details(name, phone):
@@ -370,7 +366,7 @@ class DataRepository:
             
             conn.commit()
         finally:
-            conn.close()
+            pass
 
     @staticmethod
     def delete_invoice_by_details(name, phone):
@@ -402,7 +398,7 @@ class DataRepository:
             cursor.execute("DELETE FROM customers WHERE LOWER(name) = LOWER(?) AND phone = ?", (name, phone))
             conn.commit()
         finally:
-            conn.close()
+            pass
 
     @staticmethod
     def get_latest_invoice_by_details(name, phone):
@@ -423,7 +419,6 @@ class DataRepository:
         invoice = cursor.fetchone()
         
         if not invoice:
-            conn.close()
             return None, []
             
         invoice_id = invoice[0]
@@ -435,8 +430,6 @@ class DataRepository:
             WHERE invoice_id = ?
         """, (invoice_id,))
         items = cursor.fetchall()
-        
-        conn.close()
         return invoice, items
 
     @staticmethod
@@ -446,7 +439,6 @@ class DataRepository:
         cursor = conn.cursor()
         cursor.execute("SELECT standard_name FROM master_products")
         products = [row[0] for row in cursor.fetchall()]
-        conn.close()
         return products
 
     @staticmethod
@@ -458,7 +450,7 @@ class DataRepository:
             cursor.execute("INSERT OR IGNORE INTO master_products (standard_name, default_price) VALUES (?, ?)", (name, price))
             conn.commit()
         finally:
-            conn.close()
+            pass
 
     @staticmethod
     def update_invoice_pdf(invoice_id, pdf_path):
@@ -469,7 +461,7 @@ class DataRepository:
             cursor.execute("UPDATE invoices SET pdf_path = ?, status = 'Generated' WHERE id = ?", (pdf_path, invoice_id))
             conn.commit()
         finally:
-            conn.close()
+            pass
 
     @staticmethod
     def update_invoice_status(invoice_id, status):
@@ -480,7 +472,7 @@ class DataRepository:
             cursor.execute("UPDATE invoices SET status = ? WHERE id = ?", (status, invoice_id))
             conn.commit()
         finally:
-            conn.close()
+            pass
 
     @staticmethod
     def get_all_pending_invoices():
@@ -504,8 +496,6 @@ class DataRepository:
                 'invoice': row,
                 'items': items
             })
-            
-        conn.close()
         return results
 
     @staticmethod
@@ -537,8 +527,6 @@ class DataRepository:
                 'invoice': row,
                 'items': items
             })
-            
-        conn.close()
         return results
 
     @staticmethod
@@ -547,62 +535,63 @@ class DataRepository:
         conn = get_connection()
         cursor = conn.cursor()
         
+        # Use local time instead of DB default (UTC)
+        import_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
         # Convert invoice_ids list to comma-separated string for storage
         ids_str = ",".join(map(str, invoice_ids)) if invoice_ids else ""
         
         cursor.execute("""
-            INSERT INTO import_logs (file_name, customer_count, invoice_count, total_value, invoice_ids)
-            VALUES (?, ?, ?, ?, ?)
-        """, (file_name, customer_count, invoice_count, total_value, ids_str))
+            INSERT INTO import_logs (file_name, import_date, customer_count, invoice_count, total_value, invoice_ids)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (file_name, import_date, customer_count, invoice_count, total_value, ids_str))
         conn.commit()
-        conn.close()
 
     @staticmethod
     def get_dashboard_stats():
-        """Returns key metrics for the dashboard based on the LATEST invoice for each customer."""
+        """Returns key metrics for the dashboard including time-based revenue breakdowns."""
         conn = get_connection()
         cursor = conn.cursor()
         
-        # Use CTE to find only the most recent invoice for every customer
-        # This prevents double-counting if the same data was imported multiple times
-        latest_sql = """
-        WITH LatestInvoices AS (
-            SELECT 
-                total_amount, 
-                status,
-                ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY issue_date DESC) as rn
+        # Total revenue (all time, latest invoice per customer)
+        cursor.execute("""
+            WITH LatestInvoices AS (
+                SELECT total_amount,
+                       ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY issue_date DESC) as rn
+                FROM invoices
+            )
+            SELECT COALESCE(SUM(total_amount), 0) FROM LatestInvoices WHERE rn = 1
+        """)
+        total_revenue = cursor.fetchone()[0] or 0.0
+
+        # Revenue in last N days helper
+        def _revenue_last_n_days(n):
+            cursor.execute("""
+                SELECT COALESCE(SUM(total_amount), 0)
+                FROM invoices
+                WHERE issue_date >= datetime('now', ?)
+            """, (f'-{n} days',))
+            return cursor.fetchone()[0] or 0.0
+
+        revenue_4d  = _revenue_last_n_days(4)
+        revenue_10d = _revenue_last_n_days(10)
+        revenue_30d = _revenue_last_n_days(30)
+
+        # Daily revenue series for graph (last 30 days)
+        cursor.execute("""
+            SELECT DATE(issue_date) as day, SUM(total_amount)
             FROM invoices
-        )
-        SELECT total_amount, status FROM LatestInvoices WHERE rn = 1
-        """
-        
-        cursor.execute(latest_sql)
-        rows = cursor.fetchall()
-        
-        total_revenue = 0.0
-        total_count = 0
-        pending_count = 0
-        sent_count = 0
-        
-        for amount, status in rows:
-            total_revenue += (amount or 0.0)
-            total_count += 1
-            if status == 'Sent':
-                sent_count += 1
-            else:
-                pending_count += 1
-        
-        # Total Customers (Independent check)
-        cursor.execute("SELECT COUNT(*) FROM customers")
-        customer_count = cursor.fetchone()[0] or 0
-        
-        conn.close()
+            WHERE issue_date >= datetime('now', '-30 days')
+            GROUP BY DATE(issue_date)
+            ORDER BY day ASC
+        """)
+        daily_revenue = cursor.fetchall()  # list of (date_str, amount)
         return {
             'revenue': total_revenue,
-            'total_invoices': total_count,
-            'pending': pending_count,
-            'customers': customer_count,
-            'sent': sent_count
+            'revenue_4d': revenue_4d,
+            'revenue_10d': revenue_10d,
+            'revenue_30d': revenue_30d,
+            'daily_revenue': daily_revenue,
         }
 
     @staticmethod
@@ -640,8 +629,6 @@ class DataRepository:
                 'invoice': inv,
                 'items': items
             })
-        
-        conn.close()
         return result, grand_total
 
     @staticmethod
@@ -656,7 +643,6 @@ class DataRepository:
             LIMIT ?
         """, (limit,))
         rows = cursor.fetchall()
-        conn.close()
         return rows
 
     @staticmethod
@@ -688,4 +674,51 @@ class DataRepository:
             
             conn.commit()
         finally:
-            conn.close()
+            pass
+
+    @staticmethod
+    def get_customers_by_import_ids(import_ids):
+        """
+        Returns unique customers (name, phone, address) from invoices
+        linked to the given import log IDs.
+        Deduplicates by customer name (case-insensitive).
+        """
+        if not import_ids:
+            return []
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # 1. Collect all invoice IDs from the selected import logs
+        all_invoice_ids = []
+        for imp_id in import_ids:
+            cursor.execute("SELECT invoice_ids FROM import_logs WHERE id = ?", (imp_id,))
+            row = cursor.fetchone()
+            if row and row[0]:
+                ids = [int(i) for i in row[0].split(',') if i.strip()]
+                all_invoice_ids.extend(ids)
+
+        if not all_invoice_ids:
+            return []
+
+        # 2. Get unique customers from those invoices
+        placeholders = ",".join(["?"] * len(all_invoice_ids))
+        cursor.execute(f"""
+            SELECT DISTINCT c.name, c.phone, c.address
+            FROM invoices i
+            JOIN customers c ON i.customer_id = c.id
+            WHERE i.id IN ({placeholders})
+            ORDER BY c.name ASC
+        """, all_invoice_ids)
+        rows = cursor.fetchall()
+
+        # 3. Deduplicate by lowercase name
+        seen = set()
+        unique = []
+        for name, phone, address in rows:
+            key = (name or '').strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                unique.append((name, phone or '', address or ''))
+
+        return unique

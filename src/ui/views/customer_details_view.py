@@ -111,7 +111,7 @@ class CustomerEditDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
         
         title = QLabel("Edit Customer Details")
-        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #a5b4fc; padding-bottom: 8px;")
+        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #a5b4fc; padding-bottom: 8px; background: transparent;")
         layout.addRow(title)
         
         field_style = """
@@ -127,17 +127,17 @@ class CustomerEditDialog(QDialog):
         """
 
         lbl_name = QLabel("Name:")
-        lbl_name.setStyleSheet("color: #94a3b8; font-weight: 600;")
+        lbl_name.setStyleSheet("color: #94a3b8; font-weight: 600; background: transparent;")
         self.name_input = QLineEdit(name)
         self.name_input.setStyleSheet(field_style)
         
         lbl_phone = QLabel("Phone / Mobile:")
-        lbl_phone.setStyleSheet("color: #94a3b8; font-weight: 600;")
+        lbl_phone.setStyleSheet("color: #94a3b8; font-weight: 600; background: transparent;")
         self.phone_input = QLineEdit(phone)
         self.phone_input.setStyleSheet(field_style)
 
         lbl_address = QLabel("Address:")
-        lbl_address.setStyleSheet("color: #94a3b8; font-weight: 600;")
+        lbl_address.setStyleSheet("color: #94a3b8; font-weight: 600; background: transparent;")
         self.address_input = QLineEdit(address or "")
         self.address_input.setPlaceholderText("Optional — street, city, postcode…")
         self.address_input.setStyleSheet(field_style)
@@ -193,18 +193,18 @@ class CustomerDetailsView(QWidget):
             background: transparent;
         """)
         
-        self.btn_add = QPushButton("➕  Add New")
+        self.btn_add = QPushButton("Add New")
         self.btn_add.setFixedHeight(38)
         self.btn_add.setStyleSheet(BTN_PRIMARY)
         self.btn_add.clicked.connect(self.on_add_new)
 
-        self.btn_import = QPushButton("📥  Import")
+        self.btn_import = QPushButton("Import")
         self.btn_import.setFixedHeight(38)
         self.btn_import.setToolTip("Import customers from Excel or PDF")
         self.btn_import.setStyleSheet(BTN_IMPORT)
         self.btn_import.clicked.connect(self._on_import)
 
-        self.btn_export = QPushButton("📤  Export")
+        self.btn_export = QPushButton("Export")
         self.btn_export.setFixedHeight(38)
         self.btn_export.setToolTip("Export customer list to Excel or PDF")
         self.btn_export.setStyleSheet(BTN_EXPORT)
@@ -221,7 +221,7 @@ class CustomerDetailsView(QWidget):
         sel_bar = QHBoxLayout()
         sel_bar.setSpacing(10)
 
-        self.btn_select_all = QPushButton("☑  Select All")
+        self.btn_select_all = QPushButton("Select All")
         self.btn_select_all.setFixedHeight(34)
         self.btn_select_all.setStyleSheet("""
             QPushButton {
@@ -242,7 +242,7 @@ class CustomerDetailsView(QWidget):
         self.btn_select_all.clicked.connect(self._on_select_all_toggle)
         self._all_selected = False
 
-        self.btn_delete_selected = QPushButton("🗑  Delete Selected (0)")
+        self.btn_delete_selected = QPushButton("Delete Selected (0)")
         self.btn_delete_selected.setFixedHeight(34)
         self.btn_delete_selected.setEnabled(False)
         self.btn_delete_selected.setStyleSheet("""
@@ -273,16 +273,18 @@ class CustomerDetailsView(QWidget):
         sel_bar.addStretch()
         layout.addLayout(sel_bar)
 
-        # ── Table — 5 cols: ☑ | Name | Phone | Address | Actions ──
+        # ── Table — 5 cols: Checkbox | Name | Phone | Address | Actions ──
         self.table = QTableWidget(0, 5)
-        self.table.verticalHeader().setDefaultSectionSize(56)
-        self.table.setHorizontalHeaderLabels(["", "Name", "Phone", "Address", "Actions"])
+        self.table.verticalHeader().setDefaultSectionSize(48)
+        self.table.setHorizontalHeaderLabels(["", "NAME", "PHONE", "ADDRESS", "ACTIONS"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.table.setColumnWidth(0, 40)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self.table.setColumnWidth(2, 150)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Fixed)
+        self.table.setColumnWidth(4, 160)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setAlternatingRowColors(True)
@@ -323,7 +325,7 @@ class CustomerDetailsView(QWidget):
 
     def _update_delete_btn(self):
         n = self._checked_count()
-        self.btn_delete_selected.setText(f"🗑  Delete Selected ({n})")
+        self.btn_delete_selected.setText(f"Delete Selected ({n})")
         self.btn_delete_selected.setEnabled(n > 0)
 
     def refresh_data(self):
@@ -337,7 +339,7 @@ class CustomerDetailsView(QWidget):
         customers = DataRepository.get_all_master_customers()
         self.table.setRowCount(0)
         self._all_selected = False
-        self.btn_select_all.setText("☑  Select All")
+        self.btn_select_all.setText("Select All")
 
         for i, (cid, name, phone, address) in enumerate(customers):
             self.table.insertRow(i)
@@ -370,20 +372,48 @@ class CustomerDetailsView(QWidget):
             btn_box = QWidget()
             btn_box.setStyleSheet("background: transparent;")
             btn_layout = QHBoxLayout(btn_box)
-            btn_layout.setContentsMargins(8, 0, 8, 0)
-            btn_layout.setSpacing(8)
-            btn_layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            btn_layout.setContentsMargins(4, 4, 4, 4)
+            btn_layout.setSpacing(6)
+            btn_layout.setAlignment(Qt.AlignCenter)
 
             btn_edit = QPushButton("Edit")
-            btn_edit.setStyleSheet(BTN_GHOST)
-            btn_edit.setFixedHeight(30)
-            btn_edit.setFixedWidth(70)
+            btn_edit.setFixedSize(65, 28)
+            btn_edit.setStyleSheet("""
+                QPushButton {
+                    background: rgba(30, 41, 59, 0.6);
+                    border: 1px solid rgba(99, 102, 241, 0.25);
+                    border-radius: 6px;
+                    padding: 0;
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: #a5b4fc;
+                }
+                QPushButton:hover {
+                    background: rgba(99, 102, 241, 0.15);
+                    border-color: #6366f1;
+                    color: #e0e7ff;
+                }
+            """)
             btn_edit.clicked.connect(lambda checked, c=cid, n=name, p=phone, a=address: self.on_edit(c, n, p, a))
 
             btn_del = QPushButton("Delete")
-            btn_del.setStyleSheet(BTN_DANGER)
-            btn_del.setFixedHeight(30)
-            btn_del.setFixedWidth(70)
+            btn_del.setFixedSize(65, 28)
+            btn_del.setStyleSheet("""
+                QPushButton {
+                    background: rgba(239, 68, 68, 0.1);
+                    border: 1px solid rgba(239, 68, 68, 0.2);
+                    border-radius: 6px;
+                    padding: 0;
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: #f87171;
+                }
+                QPushButton:hover {
+                    background: rgba(239, 68, 68, 0.2);
+                    color: #ffffff;
+                    border-color: #ef4444;
+                }
+            """)
             btn_del.clicked.connect(lambda checked, c=cid, n=name: self.on_delete(c, n))
 
             btn_layout.addWidget(btn_edit)
@@ -402,7 +432,7 @@ class CustomerDetailsView(QWidget):
     def _on_select_all_toggle(self):
         self._all_selected = not self._all_selected
         state = Qt.Checked if self._all_selected else Qt.Unchecked
-        self.btn_select_all.setText("☐  Deselect All" if self._all_selected else "☑  Select All")
+        self.btn_select_all.setText("Deselect All" if self._all_selected else "Select All")
         try:
             self.table.itemChanged.disconnect()
         except RuntimeError:
@@ -480,9 +510,9 @@ class CustomerDetailsView(QWidget):
         lbl.setStyleSheet("font-weight: 700; color: #a5b4fc; font-size: 14px; background: transparent;")
         vbox.addWidget(lbl)
 
-        rb_excel = QRadioButton("📊  Excel (.xlsx)")
+        rb_excel = QRadioButton("Excel (.xlsx)")
         rb_excel.setChecked(True)
-        rb_pdf   = QRadioButton("📄  PDF (.pdf)")
+        rb_pdf   = QRadioButton("PDF (.pdf)")
         vbox.addWidget(rb_excel)
         vbox.addWidget(rb_pdf)
 

@@ -1,19 +1,54 @@
 import sqlite3
 import os
+import threading
 from src.utils.paths import get_db_path
 
-DB_PATH = get_db_path()
+# ── Persistent connection pool (one per thread) ──
+_local = threading.local()
 
 def get_connection():
-    """Returns a connection to the SQLite database."""
-    # Add timeout to handle "database is locked" during simultaneous writes
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    """Returns a reusable connection to the SQLite database.
+    Keeps one persistent connection per thread to avoid
+    the overhead of opening/closing on every query.
+    """
+    conn = getattr(_local, 'conn', None)
+    db_path = get_db_path()
+
+    # Reuse existing connection if it's still valid and pointing to the same DB
+    if conn is not None:
+        try:
+            conn.execute("SELECT 1")
+            # Check if the DB path is still the same
+            if getattr(_local, 'db_path', None) == db_path:
+                return conn
+            else:
+                # DB path changed, close old and open new
+                conn.close()
+        except Exception:
+            pass  # Connection is broken, create a new one
+
+    conn = sqlite3.connect(db_path, timeout=20)
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")  # Write-Ahead Logging for better concurrency
+    conn.execute("PRAGMA synchronous = NORMAL")  # Faster writes, still safe
+    _local.conn = conn
+    _local.db_path = db_path
     return conn
+
+def close_connection():
+    """Explicitly close the persistent connection (call on app exit)."""
+    conn = getattr(_local, 'conn', None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
 
 def init_db():
     """Initializes the database with a robust relational schema."""
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    db_path = get_db_path()
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
     
     conn = get_connection()
     cursor = conn.cursor()
@@ -96,8 +131,7 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_item_inv_id ON invoice_items(invoice_id)")
     
     conn.commit()
-    conn.close()
-    print(f"Database schema initialized at {DB_PATH}")
+    print(f"Database schema initialized at {db_path}")
 
 if __name__ == "__main__":
     init_db()
